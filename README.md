@@ -38,9 +38,15 @@ Output graph is in the form of a Python dictionary with keys being nodes and val
 ### Examples
 Here are some examples of the information available in an outputted graph:
 
+Node: Preventive healthcare
+
 ![preventive healthcare example](images/example_preventive_healthcare.png)
 
+Node: accuracy
+
 ![accuracy example](images/example_accuracy.png)
+
+Node: cost
 
 ![cost example](images/example_cost.png)
 
