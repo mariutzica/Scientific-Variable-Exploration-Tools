@@ -18,6 +18,8 @@ For pretty printed output, use user_interaction document generator:
  
 For programmatic interaction, use knowledge_graph module:
 
+``import knowledge_graph as kg``
+
 ``graph = create_graph(var = '', levels = 1, graph = None, write_graph = False)``
 
  - var is the variable text
