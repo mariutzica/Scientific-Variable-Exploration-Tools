@@ -1,8 +1,9 @@
 This repository contains modules for enabling Scientific Variable exploration and grounding to SVO and WM variables.
 
-Usage:
+## Usage
 
-For pretty printed output, use user_interaction document generator:
+### Pretty document generation.
+For pretty printed output, use user_interaction module document generator:
 
 ``import user_interaction as ui``
 
@@ -15,7 +16,8 @@ For pretty printed output, use user_interaction document generator:
     
  - load_graph - takes in a filename to load an existing graph into memory
  - write_graph - write resulting graph to file
- 
+
+### Programmatic interaction.
 For programmatic interaction, use knowledge_graph module:
 
 ``import knowledge_graph as kg``
@@ -29,7 +31,26 @@ For programmatic interaction, use knowledge_graph module:
  
 Please consult the iPython notebook for examples.
 
+## Output Graph
+
 Output graph is in the form of a Python dictionary with keys being nodes and values representing edge-node relationships.
+
+### Examples
+Here are some examples of the information available in an outputted graph:
+
+Node: Preventive healthcare
+
+![preventive healthcare example](images/example_preventive_healthcare.png)
+
+Node: accuracy
+
+![accuracy example](images/example_accuracy.png)
+
+Node: cost
+
+![cost example](images/example_cost.png)
+
+### Description of output graph attributes.
 
 Nodes contain either single nouns, single adjectives, noun groups (compound nouns), modified noun/noun groups (modified with an adjectival attribute), or single noun-compound noun-modified noun/noun groups linked together with adpositions.
 
@@ -57,6 +78,7 @@ Additionally, any node may have the following associated edges:
      - hasSVOMatch: matched SVO entity
      - hasSVOVar: dictionary of SVO variables with a ranked match value (0-1) of how closely it is related to the term
      - hasSVOEntity: dictionary of SVO entities other than variables with a ranked match value (0-1) of how closely it is related to the node term
+     _**Please note that SVO entities are hashed to prevent large file size. The hash mapping can be found in the resources folder.**_
  
 - Wikipedia related:
      - hasSynonym: synonym as determined from Wikipedia search
