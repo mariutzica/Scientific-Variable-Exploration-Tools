@@ -10,7 +10,7 @@ def ask_for_var_input():
                   'crop yield, soil moisture, food availability, drought.\n\n>>>  '))
 
 # parse user input and generate a report on the desired variable
-def generate_document(levels = 1):
+def generate_document(levels = 1, load_graph = None, write_graph = False):
 
     # Get requested variable from user
     variable_input = ask_for_var_input()
@@ -25,7 +25,8 @@ def generate_document(levels = 1):
                  too much deviation from the intended meaning. Therefore, value is
                  being reset to optimum: levels == 2.'''.format(levels))
         levels = 2
-    concept_graph = kg.create_graph(variable_input, levels)
+    concept_graph = kg.create_graph(variable_input, levels, graph = load_graph, \
+                                   write_graph = write_graph)
     kg.print_svo_index_map()
     
     # Generate inference properties for knowledge graph.
@@ -40,7 +41,7 @@ def generate_document(levels = 1):
     
     display_svo_variables(concept_graph, variable_input)
     
-    #display_svo_wm_vars(concept_graph, variable_input)
+    #display_wm_vars(concept_graph, variable_input)
     
     return concept_graph
 

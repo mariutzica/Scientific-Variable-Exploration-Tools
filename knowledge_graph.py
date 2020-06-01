@@ -4,6 +4,7 @@ import pandas as pd
 import svo_api as svoapi
 import wikipediaapi as wapi
 import numpy as np
+import json
 
 # Categories and classes from SVO and wiktiwordnet; these are considered very general terms
 # and should not be further broken down. Consider adding more terms to this exclusion list...
@@ -33,15 +34,37 @@ svo_index_map = {}
 #
 # assumption (for now) - a word has only one key, one sense, so it is
 #                        only added to the graph once
-def create_graph(var = '', levels = 1, graph = None):
+def create_graph(var = '', levels = 1, graph = None, write_graph = False):
     
     # initialize graph
     if graph is None:
         graph = {}
+    else:
+        graph = load_graph(graph)
     graph = create_graph_levels(graph, var, levels)
-    
+    if write_graph:
+        write_graph(graph)
     return graph
 
+def load_graph(filename):
+    try:
+        with open(filename) as f:
+            graph = json.load(f)
+    except:
+        print('Warning: could not load graph {} ...'.format(filename))
+        graph = {}
+    return graph
+
+def write_graph(graph, filename=''):
+    if filename == '':
+        filename = "output/concept_graph.json"
+    try:
+        graph_str = json.dumps(graph, indent = 4, sort_keys=True)
+        with open(filename,"w") as f:
+            f.write(graph_str)
+    except:
+        print('Warning: could not write graph {} ...'.format(filename))
+        
 def create_graph_levels(graph, variable, levels):
     # parse the input to get noun groups and
     # their components
@@ -679,3 +702,7 @@ def graph_add_var_entity_links(graph):
                             pass
     
     return graph
+
+        
+
+
