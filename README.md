@@ -34,38 +34,38 @@ Nodes contain either single nouns, single adjectives, noun groups (compound noun
 Edge values for the different types of nodes are:
 
 - nodes containing nouns, noun groups, or modified noun groups separated by adpositions
-  - components: list of nodes which are terminology components of the src node
-   - complement: component_of
+    - components: list of nodes which are terminology components of the src node
+          - complement: component_of
 - nodes containing a noun or a noun group modified by an attribute (an adjective)
-  - isTypeOf: noun or noun group component of a modified noun or noun group (list)
-   - complement: hasType
-  - hasAttribute: adjectival attribute(s) of noun or noun group (list)
-   - complement: isAttributeOf
+    - isTypeOf: noun or noun group component of a modified noun or noun group (list)
+        * complement: hasType
+    - hasAttribute: adjectival attribute(s) of noun or noun group (list)
+        * complement: isAttributeOf
 - nodes containing a noun group:
-  - hasComponentNounConcept
-   - complement: isComponentNounConceptOf
+    - hasComponentNounConcept
+        * complement: isComponentNounConceptOf
    
 Additionally, any node may have the following associated edges:
 
 - World Modelers Indicators related:
- - hasWMIndicator: dictionary of indicators with a ranked match value (0-1) of how closely it is related to the term
+     - hasWMIndicator: dictionary of indicators with a ranked match value (0-1) of how closely it is related to the term
  
 - Scientific Variables Ontology related:
- - detSVOCategory: automatically determined top-level SVO category
- - hasSVOMatch: matched SVO entity
- - hasSVOVar: dictionary of SVO variables with a ranked match value (0-1) of how closely it is related to the term
- - hasSVOEntity: dictionary of SVO entities other than variables with a ranked match value (0-1) of how closely it is related to the node term
+     - detSVOCategory: automatically determined top-level SVO category
+     - hasSVOMatch: matched SVO entity
+     - hasSVOVar: dictionary of SVO variables with a ranked match value (0-1) of how closely it is related to the term
+     - hasSVOEntity: dictionary of SVO entities other than variables with a ranked match value (0-1) of how closely it is related to the node term
  
 - Wikipedia related:
- - hasSynonym: synonym as determined from Wikipedia search
- - isDefinedBy: terms found in the Wikipedia definition of the node term
- - isRelatedTo: closely related term found in Wikipedia
- - isClsRel: terms found in the Wikipedia definition paragraph of the node term
+     - hasSynonym: synonym as determined from Wikipedia search
+     - isDefinedBy: terms found in the Wikipedia definition of the node term
+     - isRelatedTo: closely related term found in Wikipedia
+     - isClsRel: terms found in the Wikipedia definition paragraph of the node term
  
 - WiktiWordNet related:
- - hasWWNDefinition: a list of definitions from WWN
- - hasWWNCategory: a top-level, domain indenpendent WWN category aligned with SVO top-level classes
- - isWWNDefinedBy: WWN terms used to define this node that may be of interest
+     - hasWWNDefinition: a list of definitions from WWN
+     - hasWWNCategory: a top-level, domain indenpendent WWN category aligned with SVO top-level classes
+     - isWWNDefinedBy: WWN terms used to define this node that may be of interest
  
 
 
