@@ -5,6 +5,7 @@ import svo_api as svoapi
 import wikipediaapi as wapi
 import numpy as np
 import json
+from os import path
 
 # Categories and classes from SVO and wiktiwordnet; these are considered very general terms
 # and should not be further broken down. Consider adding more terms to this exclusion list...
@@ -13,9 +14,11 @@ category_names = ['process', 'property', 'phenomenon', 'role', 'attribute', 'mat
                  'condition', 'state']
 
 variable_links = {'first_order':['hasComponentNounConcept', 'hasAttribute', 'isTypeOf',
-                                 'components','hasSynonym'], 
+                                 'components'], 
                   'second_order':['isDefinedBy', 'isWWNDefinedBy'],
                   'third_order':['isRelatedTo', 'isClsRel']} 
+variable_reverse_links = {'first_order':['isComponentNounConceptOf', 'isAttributeOf', 'hasType',
+                                 'component_of']} 
 svo_index_map = {}
 
 #########################################################
@@ -79,8 +82,8 @@ def create_graph_levels(graph, variable, levels):
                 # add word to the dictionary (annotate inside)
                 #print('Working on ... {}'.format(word))
                 [graph, new_nodes, added] = add_term_node(graph, word, attr)
-                if not added and word in graph.keys():
-                    new_nodes = graph[word]['add_components']
+                if not added and word.lower() in graph.keys():
+                    new_nodes = graph[word.lower()]['add_components']
 
                 # if the node also has components, add those to the graph as well
                 if 'components' in attr.keys():
@@ -274,7 +277,7 @@ def add_svo_index_map(svo):
             print('Ooops! Overlapping hash: {}, {}'.format(svo_entity, svo_index_map[svo_hash]))
 
 def print_svo_index_map():
-    with open('svo_index_map.txt','w') as f:
+    with open('resources/svo_index_map.txt','w') as f:
         for hashi, val in svo_index_map.items():
             f.write('hash,{}\n'.format(hashi))
             for svotag, val2 in val.items():
@@ -283,9 +286,26 @@ def print_svo_index_map():
 def get_svo_index_map():
     return svo_index_map
 
+def load_svo_index_map():
+    with open('resources/svo_index_map.txt', 'r') as f:
+        hashval = None
+        for line in f:
+            category = line.split(',')[0]
+            val = line.split(',')[1].strip('\n\r')
+            if category == 'hash':
+                if not hashval is None:
+                    svo_index_map[hashval] = element
+                element = {}
+                hashval = val
+            else:
+                element[category] = val
+    return svo_index_map
+
 # pull classes and variables from SVO
 def add_svo_info(graph, name):
     
+    if path.exists('resources/svo_index_map.txt'):
+        svo_index_map = load_svo_index_map()
     if (len(name.split()) == 1):
         #print('Search for SVO class and variables...')
         lemma = ' '.join(graph[name.lower()]['lemma_seq'])
@@ -506,10 +526,76 @@ def add_wwn_def(graph, name, added = None):
     #print('Finishing add wwn info with added: ',added)    
     return [graph, added]
 
-def graph_inference(graph):
+def graph_inference(graph, index_map_file):
+    [graph, index_map] = update_synonyms_bank(graph, index_map_file)
     graph = graph_define_category(graph)
-    graph = graph_add_var_entity_links(graph)
-    return graph
+    graph = graph_add_var_entity_links(graph, index_map)
+    return [graph, index_map]
+
+def update_synonyms_bank(graph, index_map_file):
+    if index_map_file is None:
+        index_map = {}
+        for key in graph.keys():
+            index_map[key] = key
+    else:
+        with open(index_map_file) as f:
+            index_map = json.load(f)
+    
+    [graph, index_map] = update_synonyms(graph, index_map)
+    
+    return [graph, index_map]
+
+def update_synonyms(graph, index_map):
+    
+    transfer_links_dict = ['hasSVOVar', 'hasSVOEntity', 'hasSVOMatch','hasWMIndicator']
+    transfer_links_list =  ['isDefinedBy','isWWNDefinedBy', 'hasWWNCategory', 'hasWWNDefinition']
+    link = 'hasSynonym'
+    rem_nodes = []
+    for name in graph.keys():
+        if not name in index_map.keys():
+            index_map[name] = name
+        if link in graph[name].keys():
+            for synonym in graph[name][link]:
+                if synonym in graph.keys():
+                    rem_nodes.append(synonym)
+                    index_map[synonym] = name
+                    
+    new_graph = {}
+    for key, val in graph.items():
+        if not key in rem_nodes:
+            new_graph[key] = val
+        else:
+            for key_t, val_t in graph[key].items():
+                if key_t in transfer_links_list:
+                    for v in val_t:
+                        if key_t in graph[index_map[key]].keys() and \
+                            not v in graph[index_map[key]][key_t]:
+                            graph[index_map[key]][key_t].append(v)
+                        else:
+                            graph[index_map[key]][key_t] = [v]
+                elif key_t in transfer_links_dict:
+                    for k, v in graph[key][key_t].items():
+                        if (key_t != 'hasSVOMatch'):
+                            if key_t in graph[index_map[key]].keys() and \
+                                k in graph[index_map[key]][key_t].keys():
+                                graph[index_map[key]][key_t][k] = \
+                                max(graph[index_map[key]][key_t][k], v)
+                            elif key_t in graph[index_map[key]].keys() and \
+                                not k in graph[index_map[key]][key_t].keys():
+                                graph[index_map[key]][key_t][k] = v
+                            elif not key_t in graph[index_map[key]].keys():
+                                graph[index_map[key]][key_t] = {k : v}
+                        else:
+                            if key_t in graph[index_map[key]].keys() and \
+                                k in graph[index_map[key]][key_t].keys() and \
+                                not v in graph[index_map[key]][key_t][k]:
+                                graph[index_map[key]][key_t][k].append(v)
+                            elif key_t in graph[index_map[key]].keys() and \
+                                not k in graph[index_map[key]][key_t].keys():
+                                graph[index_map[key]][key_t][k] = [v]
+                            
+                
+    return [new_graph, index_map]
 
 def graph_define_category(graph):
     # categorize terms as
@@ -655,54 +741,35 @@ def graph_define_category(graph):
     
     return graph
             
-def graph_add_var_entity_links(graph):
+def graph_add_var_entity_links(graph, indicator_map):
     
     terms = list(graph.keys())
-    for link in variable_links['first_order']:
-        for word in terms:
-            if link in graph[word].keys():
-                linked_terms = graph[word][link]
-                for lterm in linked_terms:
-                    for typ_link in ['hasSVOVar', 'hasSVOEntity']:
-                        try:
-                            svovar = graph[lterm][typ_link]
-                            if not typ_link in graph[word].keys():
-                                graph[word][typ_link] = {}
-                            for key, val in svovar.items():
-                                if not key in graph[word][typ_link].keys():
-                                    graph[word][typ_link][key] = val
-                            #print('no error')
-                            #print(','.join([link,word,lterm,typ_link]))
-                        except:
-                            #print('first order error')
-                            #print(','.join([link,word,lterm,typ_link]))
-                            pass
-                                
-    for link in variable_links['second_order']:
-        for word in terms:
-            if link in graph[word].keys():
-                linked_terms = graph[word][link]
-                for lterm in linked_terms:
-                    for typ_link in ['hasSVOVar', 'hasSVOEntity']:
-                        try:
-                            #print('no error')
-                            #print(link,word,lterm,typ_link)
-                            svovar = graph[lterm][typ_link]
-                            if not typ_link in graph[word].keys():
-                                graph[word][typ_link] = {}
-                            for key, val in svovar.items():
-                                if not key in graph[word][typ_link].keys():
-                                    graph[word][typ_link][key] = val*0.7
-                                else:
-                                    graph[word][typ_link][key] = \
-                                        min(.9, graph[word][typ_link][key] + val)
-                        except:
-                            #print('second order error')
-                            #print(link,word,lterm,typ_link)
-                            pass
-    
+    for link in (variable_links['first_order'] + variable_links['second_order']):
+        factor = 1
+        if link in variable_links['second_order']:
+            factor = 0.83
+        for term in terms:
+            if link in graph[term].keys():
+                linked_terms = graph[term][link]
+                num_linked_terms = len(linked_terms)
+                for typ_link in ['hasSVOVar', 'hasSVOEntity', 'hasWMIndicator']:
+                    new_val = {}
+                    if not typ_link in graph[term].keys():
+                        graph[term][typ_link] = {}
+                    for lterm in linked_terms:
+                        if lterm in indicator_map.keys() and typ_link in graph[indicator_map[lterm]].keys():
+                            entity = graph[indicator_map[lterm]][typ_link]
+                            for key, val in entity.items():
+                                if not key in new_val.keys():
+                                    new_val[key] = 0
+                                new_val[key] += factor * val/num_linked_terms
+                    for key, val in new_val.items():
+                        if val > 0.05:
+                            if key in graph[term][typ_link].keys():
+                                graph[term][typ_link][key] = max(val, graph[term][typ_link][key])
+                            else:
+                                graph[term][typ_link][key] = val
     return graph
-
         
 
 
