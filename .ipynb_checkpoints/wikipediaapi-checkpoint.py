@@ -1,6 +1,10 @@
 import requests
 from lxml import html
 
+# return the id and title of the top wikipedia page related to a term
+# output is in the form of a dictionary; 
+# the keys 'pageid', 'title', 'redirecttitle', and 'sectiontitle' provide the
+# values returned by the wikipedia api
 def get_top_wikipedia_entry(term):
     
     S = requests.Session()
@@ -19,14 +23,9 @@ def get_top_wikipedia_entry(term):
 
     R = S.get(url=URL, params=PARAMS)
     DATA = R.json()
-
-    #top_result_title = ''
-    #top_result_pageid = -1
-
-    #for result in DATA['query']['search']:
-    #    if 'redirecttitle' in result.keys():
-    #        print(result['redirecttitle'])
-                           
+    
+    # select the desired result based on the title or the redirecttitle or sectiontitle of the page
+    # exact match returns one of these, no match returns the top (0th) entry
     result = {}
     num_results = len(DATA['query']['search'])
     if num_results > 0:
@@ -38,29 +37,23 @@ def get_top_wikipedia_entry(term):
                           if 'sectiontitle' in result.keys() else '' \
                           for result in DATA['query']['search'] ]
 
-        #print(result_titles)
-        #print(redirect_titles)
-        #print(section_titles)
-        #print(term)
         result_index = 0
         if term.lower() in result_titles:
             result_index = result_titles.index(term.lower())
-            #print('result')
         elif term.lower() in redirect_titles:
             result_index = redirect_titles.index(term.lower())
-            #print('redirect')
         elif term.lower() in section_titles:
             result_index = section_titles.index(term.lower())
-            #print('section')
 
-        
-        #top_result = DATA['query']['search'][desired_result]
-        #top_result_title = DATA['query']['search'][result_index]['title']
-        #top_result_pageid = DATA['query']['search'][result_index]['pageid']
         result = DATA['query']['search'][result_index]
         
     return result
-        
+
+# parse the bulk text from the wikipedia page desired 
+# (identified by id returned by get_top_wikipedia_entry)
+# returns
+# - result: a list of the lines of text on the page
+# - disambig: Boolean indicating if the page is a disambugation page
 def parse_wikipedia_page(pageid):
     S = requests.Session()
     URL = "https://en.wikipedia.org/w/api.php"
@@ -70,17 +63,15 @@ def parse_wikipedia_page(pageid):
             'format': "json"
         }
 
-    pos = []
-    defs = []
-    nyms = []
-    f = open('pageid_error.log','w')
+    f = open('output/pageid_error.log','w')
     result = ''
+    disambig = False
     try:
         R = S.get(url=URL, params=PARAMS)
         DATA = R.json()
         tree = html.fromstring(DATA['parse']['text']['*'])
         
-        # determine whether this is a disambiguation page
+        # determine whether this is a disambiguation page        
         try:
             disambig = tree.xpath('*[@id="disambigbox"]//text()')
         except:
@@ -92,73 +83,52 @@ def parse_wikipedia_page(pageid):
         if not disambig:
             all_elem = tree.xpath('//div[@class="mw-parser-output"]//p//text()')
             result = ''.join(all_elem)
-        
-        # code for extracting the 'see also' box from the top
-        #try:
-        #    seealso = tree.xpath('(//div[contains(@class, "hatnote") and contains(@class, "navigation-not-searchable")])[1]//text()')
-            #print(seealso)
-        #    seealso = ''.join(seealso)
-        #except:
-        #    print('Error header parse.')
-        
+                
         else:
             all_elem = tree.xpath('//div[@class="mw-parser-output"]//li//text()')
             result = '\n'.join(all_elem)
     except:
-        f.write(pageid + ' text parse error')
+        f.write(str(pageid) + ' text parse error')
     f.close()
 
     result = result.split('\n')
-    
-    # code for extracting the 'see also' box from the top
-    #i = 0
-    #seealso = seealso.split('\n')
-    #start_part = True
-    #while start_part and i<len(result):
-    #    if result[i] != seealso[0]:
-    #        i = i + 1
-    #    else:
-    #        start_part = False
-    #j = 0
-    #while (j<len(seealso)) and (seealso[j] == result[i]):
-    #    #print('Removed: ',seealso[i:i+len(result[0])])
-    #    j = j + 1
-    #    result = result[:i] + result[i+1:]
-    #seealso = '\n'.join(seealso)    
-            
+                
     return [result, disambig]
 
 # read text from top Wikipedia result, return cleaned text
-def get_wikipedia_text(state):
+# this function is a pretty wrapper around the parse_wikipedia_page and
+# get_wikipedia_text functions
+# it returns the following:
+#  - text_clean : a list of paragraphs on the page
+#  - disambig : boolean indicating if the page is a disambiguation page
+#  - title, redirecttitle: the title and redirect of the page
+#  - currently not using section title
+def get_wikipedia_text(term):
     
     title = ''
     redirecttitle = ''
-    term = state.strip('"')
+    term = term.strip('"')
     disambig = False
     text_clean = []
     
     # get information about the top matching result to our query
-    wikipedia_top_result = get_top_wikipedia_entry(state)
-    #print(wikipedia_top_result.keys())
-    if len(wikipedia_top_result) > 0:
-        if 'pageid' in wikipedia_top_result.keys():
+    wikipedia_top_result = get_top_wikipedia_entry(term)
+    if 'pageid' in wikipedia_top_result.keys():
             
-            # use the page id to get the text on the page
-            pageid = wikipedia_top_result['pageid']
-            [page_text, disambig_text] = parse_wikipedia_page(pageid)
+        # use the page id to get the text on the page
+        pageid = wikipedia_top_result['pageid']
+        [page_text, disambig_text] = parse_wikipedia_page(pageid)
             
-            # get the tile of the page and any redirect
-            if 'title' in wikipedia_top_result.keys():
-                title = wikipedia_top_result['title'].lower()
-            if 'redirecttitle' in wikipedia_top_result.keys():
-                redirecttitle = wikipedia_top_result['redirecttitle'].lower()
-            #print(pageid)
-            #page_text = page_text.lower()
+        # get the tile of the page and any redirect
+        if 'title' in wikipedia_top_result.keys():
+            title = wikipedia_top_result['title'].lower()
+        if 'redirecttitle' in wikipedia_top_result.keys():
+            redirecttitle = wikipedia_top_result['redirecttitle'].lower()
             
-            # simple text cleaning: remove empty lines and strip whitespace from ends.
-            # each line contains a different paragraph
-            text_clean = [x.strip() for x in page_text if x!='']
-            # translate disambiguation flag
-            disambig = False if disambig_text == [] else True
+        # simple text cleaning: remove empty lines and strip whitespace from ends.
+        # each line contains a different paragraph
+        text_clean = [x.strip() for x in page_text if x!='']
+        # translate disambiguation flag
+        disambig = False if disambig_text == [] else True
     
     return [text_clean, disambig, title, redirecttitle]
