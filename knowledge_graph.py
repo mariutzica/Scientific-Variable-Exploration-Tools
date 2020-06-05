@@ -20,7 +20,7 @@ variable_links = {'first_order':['hasComponentNounConcept', 'hasAttribute', 'isT
 variable_reverse_links = {'first_order':['isComponentNounConceptOf', 'isAttributeOf', 'hasType',
                                  'component_of']} 
 svo_index_map = {}
-
+wwn = wwnapi.wiktiwordnet()
 #########################################################
 #                                                       #
 # Entry function, this calls all procedures to generate #
@@ -246,9 +246,9 @@ def add_noun_components(graph, name, pos_seq, lemma_seq, added = None):
 def add_wwn_info(graph, name):
     #print('Entering add wwn info with word: ',name)
     lemma = ' '.join(graph[name]['lemma_seq'])
-    categories = wwnapi.get_category(name.lower())
+    categories = wwn.get_category(name.lower())
     if (categories == {}) and (lemma != ''):
-        categories = wwnapi.get_category(lemma.lower())
+        categories = wwn.get_category(lemma.lower())
     
     for category in categories.keys():
         if not 'hasWWNCategory' in graph[name].keys():

@@ -1,48 +1,64 @@
-import pandas as pd
+import json
 
-ext = 'wiktiwordnet/'
-attr = pd.read_csv(ext + 'attributes.csv', usecols = ['term', 'pos', 'definition'])
-body = pd.read_csv(ext + 'body.csv', usecols = ['term', 'pos', 'definition'])
-domain = pd.read_csv(ext + 'domains.csv', usecols = ['term', 'pos', 'definition'])
-matter = pd.read_csv(ext + 'matter.csv', usecols = ['term', 'pos', 'definition'])
-meas = pd.read_csv(ext + 'measures.csv', usecols = ['term', 'pos', 'definition'])
-phen = pd.read_csv(ext + 'phenomenon.csv', usecols = ['term', 'pos', 'definition'])
-proc = pd.read_csv(ext + 'processes.csv', usecols = ['term', 'pos', 'definition'])
-prop = pd.read_csv(ext + 'properties.csv', usecols = ['term', 'pos', 'definition'])
-role = pd.read_csv(ext + 'roles.csv', usecols = ['term', 'pos', 'definition'])
-units = pd.read_csv(ext + 'units.csv', usecols = ['term', 'pos', 'definition'])
-
-def check_domain(term):
-    found = False
-    definition = ''
-    if term in domain['term'].tolist():
-        found = True
-        definition = domain.loc[domain['term']==term,'definition']
+class wiktiwordnet:
+    
+    # data will contain the information from WiktiWordnet
+    #
+    # data is a structured dictionary indexed as:
+    #
+    # data[term][pos][[definition]]
+    #
+    # where term is the unique word, pos is the associated part of speech, 
+    #      and [definition] is a list of string definitions associated with that
+    #      term and part of speech
+    
+    def __init__(self, ext = 'resources/'):
         
-    return [found, definition]
+        data = {}
+        filename = ext + 'wiktiwordnet.json'
+            
+        try:
+            with open(filename) as f:
+                data = json.load(f)
+        except:
+            print('Error when trying to open WiktiWordNet file {}. Skipped!'\
+                  .format(filename))
+                        
+        self.data = data
+        
+        
+    # check WWN to see if a term has been categorized as a Domain
+    # returns two elements:
+    #
+    # - found: True if term was found in the Domain category; False otherwise
+    # - definition: the first definition of the term found under the Domain category
+    def check_domain(self, term):
+        
+        found = False
+        definition = ''
+        
+        if 'Domain' in self.data.keys():
+            if term in self.data['Domain'].keys():
+                if 'Noun' in self.data['Domain'][term].keys():
+                    found = True
+                    definition = self.data['Domain'][term]['Noun'][0]
 
-def get_category(term):
-    category = {}
-    if term in domain['term'].tolist():
-        definition = domain.loc[domain['term']==term,'definition'].iloc[0]
-        category['Domain'] = definition
-    if term in matter.loc[matter['pos']=='Noun','term'].tolist():
-        definition = matter.loc[matter['term']==term,'definition'].iloc[0]
-        category['Matter'] = definition
-    if term in proc.loc[proc['pos']=='Noun','term'].tolist():
-        definition = proc.loc[proc['term']==term,'definition'].iloc[0]
-        category['Process'] = definition
-    if term in attr.loc[attr['pos']=='Noun','term'].tolist():
-        definition = attr.loc[attr['term']==term,'definition'].iloc[0]
-        category['Attribute'] = definition
-    if term in prop.loc[prop['pos']=='Noun','term'].tolist():
-        definition = prop.loc[prop['term']==term,'definition'].iloc[0]
-        category['Property'] = definition
-    if term in body.loc[body['pos']=='Noun','term'].tolist():
-        definition = body.loc[body['term']==term,'definition'].iloc[0]
-        category['Body'] = definition
-    if term in role.loc[role['pos']=='Noun','term'].tolist():
-        definition = role.loc[role['term']==term,'definition'].iloc[0]
-        category['Role'] = definition
+        return [found, definition]
 
-    return category
+    # get all WWN categories for a term
+    # returns a dictionary of {category:definition} pairs
+    # 
+    # assumptions:
+    # - first definition is the only one returned
+    # - only terms with part-of-speech == Noun are considered
+    def get_category(self, term):
+        
+        category = {}
+        
+        for cat in self.data.keys():
+            if term in self.data[cat].keys():
+                if 'Noun' in self.data[cat][term].keys():
+                    definition = self.data[cat][term]['Noun'][0]
+                    category[cat] = definition
+
+        return category
