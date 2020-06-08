@@ -1,7 +1,7 @@
 import wiktiwordnetapi as wwnapi
 import parse_tools as pt
 import pandas as pd
-import svo_api as svoapi
+import svoapi
 import wikipediaapi as wapi
 import numpy as np
 import json
