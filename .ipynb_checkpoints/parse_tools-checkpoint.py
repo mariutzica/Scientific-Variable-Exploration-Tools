@@ -2,38 +2,60 @@ import stanza
 import pandas as pd
 #stanza.download('en')
 nlp = stanza.Pipeline('en')
-# usage:
-# doc = nlp(sentence)
-# doc.sentences : iterator
-# doc.sentences[0].words : iterator
 
-# extract noun groups in a paragraph
-def parse_noun_groups(text):
-    sentence_no = 1
-    noun_groups = {}
-    if text != '':
-        doc = nlp(text)
-        for sentence in doc.sentences:
-            noun_groups[sentence_no] = find_noun_adj_groups(sentence)
-            sentence_no += 1
-        
-    return noun_groups
-
+####### !!!!!!!!!!!!!!!!!##################
+# NEED to do more work on cleaning up this code, eliminate redundant calls to stanza
+# nlp, atomize functionality more
+# better commenting throughout
+###################################################################################
+#
+#   FUNCTIONS FOR FINDING NOUN GROUPS (TECHNICAL TERMINOLOGY) IN TEXT
+#
+###################################################################################
+#
 # extract noun groups on a page
+# this function takes the input text, an array of strings
+#   where each string is a separate paragraph
+# it returns a dictionary, indexed by paragraph, starting at 1
+#   each paragraph key points to a dictionary that is returned by
+#   parse_noun_groups
 def parse_page_noun_groups(text):
+    
     paragraph_no = 1
     noun_groups = {}
-    for paragraph in text:
-        noun_groups[paragraph_no] = parse_noun_groups(paragraph)
+    
+    for paragraph in text:    
+        noun_groups[paragraph_no] = parse_paragraph_noun_groups(paragraph)
         paragraph_no += 1
         
     return noun_groups
 
-# count noun groups on a page
-#def page_count_noun_groups(parsed_page)
-# Function to find noun groups as defined in Justetson, 1995 + single nouns 
+# extract noun groups in a paragraph
+# text is a string
+# output is a dictionary, indexed by sentence number starting at 1.
+# for each sentence, the contained noun groupings are provided. For each noun group, 
+# the 'components' (separated by adpositions) are provided where applicable
+# each noun group (and component group where applicable) has a 
+#    'pos_seq' - the part of speech sequence, and
+#    'lemma_seq' - the root word sequences
+def parse_paragraph_noun_groups(text):
+    
+    sentence_no = 1
+    noun_groups = {}
+    
+    if text != '':
+        doc = nlp(text)    
+        for sentence in doc.sentences:
+            noun_groups[sentence_no] = parse_sentence_noun_groups(sentence)
+            sentence_no += 1
+        
+    return noun_groups
+
+
+# Function to find noun groups in a sentences as defined in Justetson, 1995 + single nouns 
 # - not restricted to 2x occurences
-def find_noun_adj_groups(sentence):
+# takes in a sentence or phrase string
+def parse_sentence_noun_groups(sentence):
                 
     # group start marks the beginning of a mix of NOUN-ADJECTIVE-ADPOSITION cluster
     group_start = False
@@ -60,7 +82,7 @@ def find_noun_adj_groups(sentence):
             pos_sequence = ['NOUN'] + pos_sequence
             lemma_sequence = [word.lemma] + lemma_sequence
         # finding an adjective adds it to the group
-        elif (word.upos == 'ADJ') and group_start and (pos_sequence[0] == 'NOUN'):
+        elif (word.upos == 'ADJ') and group_start and (pos_sequence[0] != 'ADPOSITION'):
             current_word = word.text + ' ' + current_word
             pos_sequence = ['ADJECTIVE'] + pos_sequence
             lemma_sequence = [word.lemma] + lemma_sequence
@@ -86,32 +108,45 @@ def find_noun_adj_groups(sentence):
         groups = add_word_cluster(current_word, pos_sequence, lemma_sequence, groups)        
     return groups    
 
-
+# determine whether a word cluster is valid/clisp as necessary
+# and add it to groups
+# decompose noun group into noun clusters divded by adpositions
 def add_word_cluster(current_word, pos_sequence, lemma_sequence, groups):
 
     # is this a valid grouping to add to the word groups?
     # if it starts with an adposition then it should be dropped
-    while (pos_sequence[0] == 'ADPOSITION'):
-        current_word = current_word.split(' ',1)[1]
-        pos_sequence = pos_sequence[1:]
-        lemma_sequence = lemma_sequence[1:]
+    start_index = 0
+    i = 0
+    while (pos_sequence[i] != 'NOUN') and (i < len(pos_sequence)):
+        if pos_sequence[i] == 'ADPOSITION':
+            start_index = i + 1
+        i += 1
+    
+    # add noun group to the dictionary if non-empty
+    current_word = ' '.join(current_word.split(' ')[start_index:])
+    pos_sequence = pos_sequence[start_index:]
+    lemma_sequence = lemma_sequence[start_index:]
     
     if current_word != '':
         groups[current_word] = {'pos_seq':pos_sequence, 'lemma_seq':lemma_sequence}
     
+    # decompose noun group along adposition
     decomp = decompose_noun_group(current_word, pos_sequence, lemma_sequence)
     if decomp != {}:
         groups[current_word]['components'] = decomp
+        
     return groups
 
-# Function to find noun group components of a noun group
+# find noun group components of a noun group
 def decompose_noun_group(ngroup, pos, lemma):
+
     groups = {}
+    
     adp_loc = find_sequence(pos, ['ADPOSITION'])
     adpnadp_loc = find_sequence(pos, ['ADPOSITION','NOUN','ADPOSITION'])
-    #print(ngroup, adp_loc, adpnadp_loc)
+
     # if an adposition is found, then break up and parse at each adposition, but only
-    # when adpositions are more than 2 distance apart
+    # when adpositions are more than 2 distance apart if 2 or more adpositions
     # this is intended to drop patterns such as in regards to, but maybe it would
     # drop some important nouns and we need to add it back? not sure ...
     start_i = 0
@@ -125,12 +160,13 @@ def decompose_noun_group(ngroup, pos, lemma):
                 start_i = adp + 3
             else:
                 start_i = adp + 1
+        # add the last group
         if start_i < len(ngroup.split()):
             w = ' '.join(ngroup.split()[start_i:])
             groups[w]={'pos_seq':pos[start_i:], 'lemma_seq':lemma[start_i:]}
     return groups
 
-# Finds all start indexes of a sequence of elements in a list
+# Find all start indexes of a sequence of elements in a list
 def find_sequence(lst, seq):
     index_seq = []
     for i in range(len(lst)):
@@ -143,7 +179,13 @@ def find_sequence(lst, seq):
             index_seq.append(i)
     return index_seq
 
-# This function finds the paragraph that starts with an 'is' sentence ... and that has a matching 
+###################################################################################
+#
+#       FUNCTIONS TO FIND EXISTENCE CONTENT IN TEXT (e.g., X IS Y)
+#
+###################################################################################
+#
+# find the paragraph that starts with an 'is' sentence ... and that has a matching 
 # nsubj
 def find_is_paragraph(text, title, use_name):
     pno = 0
@@ -295,7 +337,6 @@ def find_nsubj(sentence):
                         vb_groupings[vb]['obl'][str(comphead)] = \
                                 comp_text + ' ' +vb_groupings[vb]['obl'][str(comphead)]
     
-    #print(vb_groupings)
     # drop verbs that are missing nsubj or obj/obl
     vb_copy = {}
     for vbid in vb_groupings.keys():
@@ -307,6 +348,19 @@ def find_nsubj(sentence):
                 del vb_copy[vbid]['obj']
     return vb_copy
 
+###################################################################################
+#
+#             FUNCTION TO ACCUMULATE ALL NOUN GROUPS ON A PAGE
+#
+###################################################################################
+
+# return the type of a noun group
+# compound - noun groups connected by adpositions
+# modnoungrp - noun adj noun grouping
+# modnoun - adj noun grouping
+# noungrp - nouns only, moore than one noun
+# noun - single noun
+# also return the noungrp and lemma for modnoun
 def extract_type(node_name, pos_seq, lemma_seq):
     node_type = node_name
     lemma = ' '.join(lemma_seq)
@@ -332,6 +386,16 @@ def extract_type(node_name, pos_seq, lemma_seq):
             lemma = ' '.join(lemma_seq[i:])
     return [node_type, lemma, typ]
 
+# count all of the noun groups on a page, and sort them in descending order
+# returns a dataframe with the following columns:
+# - noun_group - the noun group found
+# - count - number of times it occurs in the text
+# - type - multiple, adjectival or simple
+#      - multiple: contains an adposition
+#      - adjectival: no adposition, contains an adjective
+#      - simple: contains nouns only
+# - modified - desired term modified with either a noun or an adjective (head only)
+# - aspects - term modified with noun (tail only) and terms with adpositions
 def count_noun_groups(parsed_page, term):
     noun_group_count = {}
     for par_no, paragraph in parsed_page.items():

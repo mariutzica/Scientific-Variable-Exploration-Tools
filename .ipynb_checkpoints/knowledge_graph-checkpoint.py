@@ -73,7 +73,7 @@ def create_graph_levels(graph, variable, levels):
     # their components
     if levels > 0:
         #print(variable)
-        input_noun_groups = pt.parse_noun_groups(variable)
+        input_noun_groups = pt.parse_paragraph_noun_groups(variable)
         #print(input_noun_groups)
         # loop through each sentence (should only be one) in input
         for sentence, word_attr in input_noun_groups.items():
