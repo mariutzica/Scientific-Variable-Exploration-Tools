@@ -72,9 +72,12 @@ def create_graph_levels(graph, variable, levels):
     # parse the input to get noun groups and
     # their components
     if levels > 0:
-        #print(variable)
-        input_noun_groups = pt.parse_paragraph_noun_groups(variable)
-        #print(input_noun_groups)
+        #print('Starting new word,', variable)
+        parsed_variable = pt.ParsedParagraph(variable)
+        input_noun_groups = {}
+        for sno in parsed_variable.sentences.keys():
+            input_noun_groups[sno] = parsed_variable.sentences[sno].noun_groups.ng
+
         # loop through each sentence (should only be one) in input
         for sentence, word_attr in input_noun_groups.items():
             # loop through each noun group in sentence
@@ -87,6 +90,7 @@ def create_graph_levels(graph, variable, levels):
 
                 # if the node also has components, add those to the graph as well
                 if 'components' in attr.keys():
+                    #print('In components ...')
                     graph[word.lower()]['components'] = list(attr['components'].keys())
                     for comp_word in attr['components'].keys():
                         #print('Working on ... {}'.format(comp_word))
@@ -112,6 +116,7 @@ def add_term_node(graph, name, attr, added=None):
     # list of current graph entries
     existing_nodes = list(graph.keys())
     # lemma version of current node
+
     lemma = ' '.join(attr['lemma_seq'])
     
     if added is None:
@@ -167,8 +172,41 @@ def add_node_type_attr(graph, word, added=None):
     
     if added is None:
         added = []
+    ######## temporary insert    
+    # return the type of a noun group
+    # compound - noun groups connected by adpositions
+    # modnoungrp - noun adj noun grouping
+    # modnoun - adj noun grouping
+    # noungrp - nouns only, moore than one noun
+    # noun - single noun
+    # also return the noungrp and lemma for modnoun
+    def extract_type(node_name, pos_seq, lemma_seq):
+        node_type = node_name
+        lemma = ' '.join(lemma_seq)
+        i  = 0
+        if 'ADPOSITION' in pos_seq:
+            typ = 'compound'
+        elif 'NOUN ADJECTIVE' in ' '.join(pos_seq):
+            typ = 'modnoungrp'
+        elif 'NOUN' in pos_seq and 'ADJECTIVE' in pos_seq:
+            typ = 'modnoun'
+        elif 'ADJECTIVE' in pos_seq:
+            typ = 'adj'
+        elif len(pos_seq) > 1:
+            typ = 'noungrp'
+        else:
+            typ = 'noun'
+        #print(node_name, pos_seq)
+        if not 'ADPOSITION' in pos_seq and 'NOUN' in pos_seq:
+            while (pos_seq[i] != 'NOUN') and i < len(pos_seq):
+                i = i + 1
+            if i < len(pos_seq):
+                node_type = ' '.join(node_name.split()[i:])
+                lemma = ' '.join(lemma_seq[i:])
+        return [node_type, lemma, typ]
+        
     # separate out the node_type from attributes and its lemma sequence
-    [node_type, lemma, typ] = pt.extract_type(word, pos_seq, lemma_seq)
+    [node_type, lemma, typ] = extract_type(word, pos_seq, lemma_seq)
 
     # if the node was broken down, then add its components
     if (typ == 'modnoun') and (node_type != word):
@@ -392,6 +430,7 @@ def add_wikipedia_def(graph, name, added = None, long = False):
     # grab Wikipedia page information
     #print('Entering Wikipedia search')
     [text, disambig, title, redirecttitle] = wapi.get_wikipedia_text(name)
+    text = pt.ParsedDoc(text)
     lemma = ' '.join(graph[name.lower()]['lemma_seq'])
     #print('Wikipedia search finished')
     
@@ -414,9 +453,15 @@ def add_wikipedia_def(graph, name, added = None, long = False):
         # if Wikipedia page found is not a good match (e.g., not a synonym/redirect), then add it
         # to the attributes as related, but do not create a new node for it (this is a stub)
         graph = add_related(graph, use_name, title, name.lower())
-        #print('Parsing Wikipedia page ...')
+        #print('Parsing Wikipedia page ...', title, name.lower())
         # find is paragraph based on use_name; default to title if not found and title is different
-        [pno, nsubj, name_found] = pt.find_is_paragraph(text, title, use_name)
+        p = text.find_is_nsubj(use_name)
+        name_found = ''
+        pno = -1
+        if not p is None:
+            pno = list(p.keys())[0]
+            name_found = use_name
+            sno = p[pno][0]
         #print('Finished parsing Wikipedia page. The name found was: ', name_found, 'and the paragraph was par no')
         #print(pno,' starting with ...', text[pno][0])
         # if name_found is use_name
@@ -429,19 +474,15 @@ def add_wikipedia_def(graph, name, added = None, long = False):
             #    else:
             #        name_found = name.lower()
             # parse the first paragraph or all of the text based on "long" setting
-            if not long:
-                def_noun_groups = pt.parse_noun_groups(text[pno])
-            else:
-                #print('Parsing whole wikipedia page ... name: {}, name found: {}'\
-                #      .format(name.lower(), name_found.lower()))
-                parsed_page = pt.parse_page_noun_groups(text)
-                def_noun_groups = parsed_page[pno+1]
+            def_noun_groups = {}
+            for sno in text.paragraphs[pno].sentences.keys():
+                def_noun_groups[sno] = text.paragraphs[pno].sentences[sno].noun_groups.ng
             #print(def_noun_groups)
         
             [graph, added] = add_definition(graph, name.lower(), name_found, def_noun_groups, added)
             
             if long:
-                noun_groups_index = pt.count_noun_groups(parsed_page, name_found.lower())
+                noun_groups_index = text.get_term_noun_groups(name_found.lower())
                 graph = add_dimensions(graph, name.lower(), name_found.lower(), noun_groups_index)
                 #print('Printed modifed names: {} to {}'\
                 #      .format(name_found.lower(), name.lower()))
@@ -506,24 +547,20 @@ def add_dimensions(graph, name, name_found, noun_groups_index):
 
 # parse WiktiWordNet definition
 def add_wwn_def(graph, name, added = None):
-    #print('Entering add wwn info with word: ',name)
     if added is None:
         added = []
         
     if 'hasWWNDefinition' in graph[name.lower()].keys():
         for definition in graph[name.lower()]['hasWWNDefinition']:
-            def_noun_groups = pt.parse_noun_groups(definition)
-            for ng in def_noun_groups[1].keys():
-                attr = def_noun_groups[1][ng]
-                #[graph, was_added] = add_term_node(graph, ng, attr)
-                #if was_added:
+            def_parsed = pt.ParsedParagraph(definition)
+            def_noun_groups = def_parsed.sentences[1].noun_groups.ng
+            for ng, attr in def_noun_groups.items():
                 added.append(ng)
                 if ng.lower() != name.lower():
                     if not 'isWWNDefinedBy' in graph[name.lower()].keys():
                         graph[name.lower()]['isWWNDefinedBy'] = [ng.lower()]
                     elif not ng.lower() in graph[name.lower()]['isWWNDefinedBy']:
                         graph[name.lower()]['isWWNDefinedBy'].append(ng.lower())
-    #print('Finishing add wwn info with added: ',added)    
     return [graph, added]
 
 def graph_inference(graph, index_map_file):
