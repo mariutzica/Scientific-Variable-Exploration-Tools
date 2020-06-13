@@ -429,6 +429,7 @@ class ParsedSentence:
                     compound_words.append(word.id)
 
             # nsubj and verb are children of the object
+            # only executes if be verb was found ...
             for vbid in vb_groupings.keys():
                 vbhead = words[int(vbid) - 1].head
                 if str(vbhead) in obj_words:
@@ -481,13 +482,14 @@ class ParsedSentence:
                     comphead = word.head
                     comp_text = ''
                     while str(comphead) in compound_words:
-                        skip_comp.append(temp_compid)
+                        skip_comp.append(str(comphead))
                         comp_text = (comp_text + ' ' + word.text).strip()
                         temp_compid = str(comphead)
+                        word = words[int(temp_compid) - 1]
                         comphead = word.head
                         # infinite loop?
                         if str(comphead) == temp_compid:
-                            #print(comp_text, words)
+                            print('infinite loop', temp_compid)
                             break
                     comp_text = (comp_text + ' ' + word.text).strip()
                     if str(comphead) in nsubj_words:
@@ -522,13 +524,11 @@ class ParsedSentence:
                         del vb_copy[vbid]['obj']
 
             for vb, nsubj_words_vb in vb_copy.items():
-                for subj_id, subj in nsubj_words_vb['nsubj'].items():
-                    if subj.lower() == term.lower():
-                        self.nsubj = term.lower()
-                        found = True
-                        break
-                if found:
-                    break
+                if not found:
+                    for subj_id, subj in nsubj_words_vb['nsubj'].items():
+                        if not found and (subj.lower() == term.lower()):
+                            self.nsubj = term.lower()
+                            found = True
         return found
     
     def count_noun_groups(self):
@@ -993,31 +993,27 @@ class NounGroup:
             This function needs to be compressed down as it has repeating code elements.
         """
         
-        if self.noun_group_count is None:
-            noun_group_count = {}
-            for noun_group, attr in self.ng.items():
-                if all(x.isalnum() or x.isspace() for x in noun_group):
-                    if noun_group.lower() in noun_group_count.keys():
-                        noun_group_count[noun_group.lower()]['count'] += 1
-                    else:
-                        noun_group_count[noun_group.lower()] = {}
-                        noun_group_count[noun_group.lower()]['count'] = 1
-                        noun_group_count[noun_group.lower()]['pos_seq'] = \
+        def assign_ng_type(noun_group, noun_group_count):
+            name = noun_group.lower()
+            if all([(x.isalnum() or x.isspace()) for x in noun_group]):
+                if name in noun_group_count.keys():
+                    noun_group_count[name]['count'] += 1
+                else:
+                    noun_group_count[name] = {}
+                    noun_group_count[name]['count'] = 1
+                    noun_group_count[name]['pos_seq'] = \
                                     'multiple' if 'ADPOSITION' in attr['pos_seq'] else \
                                     'adjectival' if 'ADJECTIVE' in attr['pos_seq'] else \
                                     'simple'
-                        if 'components' in attr.keys():
-                            for noun_group_comp, attr_comp in attr['components'].items():
-                                if all(x.isalnum() or x.isspace() for x in noun_group):
-                                    if noun_group_comp.lower() in noun_group_count.keys():
-                                        noun_group_count[noun_group_comp.lower()]['count'] += 1
-                                    else:
-                                        noun_group_count[noun_group_comp.lower()] = {}
-                                        noun_group_count[noun_group_comp.lower()]['count'] = 1
-                                        noun_group_count[noun_group_comp.lower()]['pos_seq'] = \
-                                                'multiple' if 'ADPOSITION' in attr_comp['pos_seq'] else \
-                                                'adjectival' if 'ADJECTIVE' in attr_comp['pos_seq'] else \
-                                                'simple'
+            return noun_group_count
+        
+        if self.noun_group_count is None:
+            noun_group_count = {}
+            for noun_group, attr in self.ng.items():
+                noun_group_count = assign_ng_type(noun_group, noun_group_count)
+                if 'components' in attr.keys():
+                    for noun_group_comp, attr_comp in attr['components'].items():
+                        noun_group_count = assign_ng_type(noun_group_comp, noun_group_count)
 
             self.noun_group_count = pd.DataFrame(columns = ['noun_group', 'count', 'type'])
             for group in noun_group_count.keys():
