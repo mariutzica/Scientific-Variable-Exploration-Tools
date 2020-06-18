@@ -25,25 +25,25 @@ def generate_document(levels = 1, load_graph = None, graph_index_map = None, wri
                  too much deviation from the intended meaning. Therefore, value is
                  being reset to optimum: levels == 2.'''.format(levels))
         levels = 2
-    concept_graph = kg.create_graph(variable_input, levels, graph = load_graph, \
+    concept_graph = kg.SciVarKG(variable_input, levels, graph = load_graph, \
                                    write_graph = write_graph)
-    kg.print_svo_index_map()
+    concept_graph.print_svo_index_map()
     
     # Generate inference properties for knowledge graph.
-    [concept_graph, index_map] = kg.graph_inference(concept_graph, graph_index_map)
+    concept_graph.graph_inference()
     
     # Generate a visualization of the core graph nodes
-    kg_viz.create_graph(concept_graph, index_map, variable_input)
+    #kg_viz.create_graph(concept_graph, index_map, variable_input)
     
-    display_svo_categorizations(concept_graph, index_map, variable_input)
+    #display_svo_categorizations(concept_graph, index_map, variable_input)
     
-    display_related_terms(concept_graph, index_map, variable_input)
+    #display_related_terms(concept_graph, index_map, variable_input)
     
-    display_wm_indicators(concept_graph, index_map, variable_input)
+    #display_wm_indicators(concept_graph, index_map, variable_input)
     
-    display_svo_variables(concept_graph, index_map, variable_input)
+    #display_svo_variables(concept_graph, index_map, variable_input)
     
-    return [concept_graph, index_map]
+    return concept_graph
         
 def display_svo_categorizations(graph, index_map, user_input):
     

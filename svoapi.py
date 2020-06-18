@@ -13,7 +13,7 @@ def search_label(term, cl = 'All', subcl = False):
     
     # search ontology for term, filter by class
     valid_classes = ['Variable', 'Phenomenon', 'Property', 'Process', 'Abstraction',
-                    'Operator', 'Attribute', 'Part', 'Role', 'Trajectory']
+                     'Operator', 'Attribute', 'Part', 'Role', 'Trajectory']
     eclassstr = "#" + "|#".join(valid_classes)
     
     if (cl != 'All') and cl in valid_classes:
@@ -230,16 +230,10 @@ def rank_search(terms, cl = 'All', subcl = False):
         
         # rank calculation:
         # string distance rank (no less than 0.7)
-        dist_penalty = min( .005 * string_distance, 0.3 )
-        rank = max(0, (num_occurences - term_penalty * 0.9)/len_id  - dist_penalty)
+        #dist_penalty = min( .005 * string_distance, 0.05 )
+        #rank = max(0, (num_occurences - term_penalty * 0.9)/len_id  - dist_penalty)
+        rank = max(0.1, (num_occurences - term_penalty * 0.2)/len_id)
         results.loc[results['entity']==entity, 'rank'] = rank
-        #if rank > 0.4:
-        #    print(entity)
-        #    print('Len id:', len_id)
-        #    print('Dist penalty:', dist_penalty)
-        #    print('String distance:', string_distance)
-        #    print('Num occurences:', num_occurences)
-        #    print('Term penalty:', term_penalty)
                 
     
     # indirect links are penalized

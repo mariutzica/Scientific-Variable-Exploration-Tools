@@ -79,8 +79,8 @@ class ParsedDoc:
             title:       A string indicating the title (main topic) of the document.
                          In the case of a Wikipedia page, this is the title of the page
                          as indexed in Wikipedia.
-            count_nouns: Boolean indicating whether noun groupings in the entire document should
-                         be extracted and counted. Default is True.
+            count_nouns: Boolean indicating whether noun groupings in the entire document 
+                         should be extracted and counted. Default is True.
         """
         
         self.paragraphs       = {}
@@ -341,6 +341,24 @@ class ParsedParagraph:
                         done = True     
                         
         return term_index
+    
+    def get_noun_groups(self, sno = None):
+        """Get all of the noun groups associated with the paragraph.
+        
+        Returns:
+            A dict with keys = sentence number and the values =
+            the ng dict attribute of a NounGroup.
+            
+        """
+        
+        noun_groups = {}
+        if sno is None:
+            for snox in self.sentences.keys():
+                noun_groups[snox] = self.sentences[snox].noun_groups.ng
+        else:
+            noun_groups = self.sentences[sno].noun_groups.ng
+            
+        return noun_groups
     
     def count_noun_groups(self):
         """Count all of the noun groups on a page, and sort them in descending order
@@ -919,7 +937,7 @@ class NounGroup:
                 i = 0
                 for attr in node_attr:
                     node_attribute[attr] = {'pos_seq': ['ADJECTIVE'], 'lemma_seq': [lemma_attr[i]],
-                                        'type': 'adj'}
+                                            'type': 'adj'}
                     i+=1
             return [node_contain, node_attribute, typ]
         

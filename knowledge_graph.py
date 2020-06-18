@@ -1,3 +1,20 @@
+"""Module contianing the SciVarKG class that holds information about Scientific
+Variables, their components, and other annotations.
+
+This module contains tools for constructing a knowledge graph of scientific
+variable terminology, including components of scientific variables. It also
+contains grounding information for to SVO variables as well as the WM indicators
+for all entities.
+
+  Typical usage example:
+
+  graph = kg.SciVarKG(graphfile = 'resources/world_modelers_indicators_kg.json')
+  graph.add_concept('thermal conductivity', depth = 2)
+  graph.write_graph()
+
+  For more examples on usage, see Module Usage and Testing notebook, section 5.
+"""
+
 import wiktiwordnetapi as wwnapi
 import parse_tools as pt
 import pandas as pd
@@ -7,806 +24,1081 @@ import numpy as np
 import json
 from os import path
 
-# Categories and classes from SVO and wiktiwordnet; these are considered very general terms
-# and should not be further broken down. Consider adding more terms to this exclusion list...
-category_names = ['process', 'property', 'phenomenon', 'role', 'attribute', 'matter',
-                     'body', 'domain', 'operator', 'variable', 'part', 'trajectory', 'form',
-                 'condition', 'state']
+class SciVarKG:
+    """Hold Scientific Variables technical terminology knowledge graph.
 
-variable_links = {'first_order':['hasComponentNounConcept', 'hasAttribute', 'isTypeOf',
-                                 'components'], 
-                  'second_order':['isDefinedBy', 'isWWNDefinedBy'],
-                  'third_order':['isRelatedTo', 'isClsRel']} 
-variable_reverse_links = {'first_order':['isComponentNounConceptOf', 'isAttributeOf', 'hasType',
-                                 'component_of']} 
-svo_index_map = {}
-wwn = wwnapi.wiktiwordnet()
-#########################################################
-#                                                       #
-# Entry function, this calls all procedures to generate #
-# graph for an input.                                   #
-#                                                       #
-#########################################################
+    A class to hold information technical terminology related to scientific
+    variables. It holds definition information for a term, as well as its likely
+    high/top level categorization, as well as matched rank alignments to
+    existing SVO entities and WM indicators. The information stored in this
+    knowledge graph can be used for semantic search and to help generate new
+    variables.
 
-# initialize a graph with the desired variables
-# Takes as input:
-#     var    == a desired variable description, preferably short
-#               DEFAULT = '' (empty string)            
-#     levels == the number of levels to which to expand graph
-#               DEFAULT = 2
-#
-# assumption (for now) - a word has only one key, one sense, so it is
-#                        only added to the graph once
-def create_graph(var = '', levels = 1, graph = None, write_graph = False):
-    
-    # initialize graph
-    if graph is None:
-        graph = {}
-    else:
-        graph = load_graph(graph)
-    graph = create_graph_levels(graph, var, levels)
-    if write_graph:
-        write_graph(graph)
-    return graph
+    Class Attributes:
+        category_names: A list of the 'reserved words' for high level
+                        categories. These terms should not be further broken
+                        down as they are considered 'terminal' nodes.
+        variable_links: A dict containing the first, second and third order link
+                        names.
+                        A first order link is one that is a direct linguistic
+                        component of the technical term.
+                        A second order links is one that points to a technical
+                        term that is used to define the root technical term.
+                        A third order link is one that points to a technical
+                        term that is considered closely related to the root
+                        technical term.
+        wwn:            A WiktiWordNet object. Used to look up technical terms
+                        in WiktiWordNet.
 
-def load_graph(filename):
-    try:
-        with open(filename) as f:
-            graph = json.load(f)
-    except:
-        print('Warning: could not load graph {} ...'.format(filename))
-        graph = {}
-    return graph
+    Instance Attributes:
+        index_map     : A dict "synonyms" bank for graph. It is the mapping from
+                        any term to its key in the knowledge graph.
+        svo_index_map : A dict containing the hash values indices determined
+                        with the hash() function and the corresponding SVO
+                        entity information including namespace, URI, and label.
+        graph         : A dict that contains the scientific variable terminology
+                        knowledge graph.
+                        There is one key for each technical term.
+                        For each key, there is an associated dictionary of
+                        property value pairs.
+                        The general format is:
+                            { 'technical term' : { 'property' : value } }
+                        The available properties are:
+                            - 'components': a list containing the technical
+                            terms that make up this term
+                            - 'hasAttribute'   : list of attributes associated
+                                                 with this technical term
+                            - 'isAttributeOf'  : list of technical terms
+                                                 modified by this attribute
+                            - 'isTypeOf'       : list of more general technical
+                                                 terms, derived by stripping
+                                                 leading adjectives
+                            - 'isRelatedTo'    : list of titles of related (but
+                                                 not matched) Wikipedia page
+                            - 'pos_seq'        : list of the part of speech
+                                                 sequence of the words making up
+                                                 the technical term;
+                                                 valid values are 'NOUN',
+                                                 'ADJECTIVE', 'ADPOSITION'
+                            - 'lemma_seq'      : list of root (lemma) words of
+                                                 the sequence of words making up
+                                                 the technical term
+                            - 'hasSVOEntity'   : dict of svohash : match rank
+                                                 pairs of non-variable,
+                                                 non-match SVO entities aligned
+                                                 with this technical term; match
+                                                 rank ranges from 0 to 1
+                                                 svohash is indexed by
+                                                 svo_index_map
+                            - 'hasSVOMatch'    : dict of svohash : match rank
+                                                 pairs of exact match SVO
+                                                 entities aligned with this
+                                                 technical term; match rank
+                                                 ranges from 0 to 1
+                                                 svohash is indexed by
+                                                 svo_index_map
+                            - 'hasSVOVar'      : dict of svohash : match rank
+                                                 pairs of non-match SVO
+                                                 variables aligned with this
+                                                 technical term; match rank
+                                                 ranges from 0 to 1
+                                                 svohash is indexed by
+                                                 svo_index_map
+                            - 'hasWMIndicator' : dict of WM indicator name :
+                                                 match rank pairs of WM
+                                                 indicators aligned with this
+                                                 term; match rank ranges from 0
+                                                 to 1
+                            - 'modified_terms' : list of strings found in
+                                                 Wikipedia article that modify
+                                                 the technical term with leading
+                                                 adjectives or nouns
+                            - 'term_aspects'   : list of strings found in the
+                                                 Wikipedia article that modify
+                                                 the technical term with
+                                                 trailing nouns or with noun
+                                                 groups linked together
+                                                 with adpositions
+                            - 'detSVOCategory' : string, determined top level
+                                                 SVO category
+                            - 'hasWWNCategory' : high level category determined
+                                                 from WiktiWordNet
+                            - 'isDefinedBy'    : list of technical terms that
+                                                 are used in the Wikipedia
+                                                 definition of the term
+                            - 'isWWNDefinedBy' : list of technical terms that
+                                                 are used in the Wiktionary
+                                                 definition of the term
 
-def write_graph(graph, filename=''):
-    if filename == '':
-        filename = "output/concept_graph.json"
-    try:
-        graph_str = json.dumps(graph, indent = 4, sort_keys=True)
-        with open(filename,"w") as f:
-            f.write(graph_str)
-    except:
-        print('Warning: could not write graph {} ...'.format(filename))
-        
-def create_graph_levels(graph, variable, levels):
-    # parse the input to get noun groups and
-    # their components
-    if levels > 0:
-        #print('Starting new word,', variable)
-        parsed_variable = pt.ParsedParagraph(variable)
-        input_noun_groups = {}
-        for sno in parsed_variable.sentences.keys():
-            input_noun_groups[sno] = parsed_variable.sentences[sno].noun_groups.ng
+    """
 
-        # loop through each sentence (should only be one) in input
-        for sentence, word_attr in input_noun_groups.items():
-            # loop through each noun group in sentence
-            for word, attr in word_attr.items():
-                # add word to the dictionary (annotate inside)
-                #print('Working on ... {}'.format(word))
-                [graph, new_nodes, added] = add_term_node(graph, word, attr)
-                if not added and word.lower() in graph.keys():
-                    new_nodes = graph[word.lower()]['add_components']
+    category_names = [ 'process', 'property', 'phenomenon', 'role', 'attribute',
+                       'matter', 'body', 'domain', 'operator', 'variable',
+                       'part', 'trajectory', 'form', 'condition', 'state',
+                       'abstraction', 'equation', 'expression']
+    variable_links = { 'first_order'  : [ 'hasComponents', 'hasAttribute',
+                                          'isTypeOf'],
+                       'second_order' : ['isDefinedBy', 'isWWNDefinedBy'],
+                       'third_order'  : ['isRelatedTo', 'isCloselyRelatedTo'] }
 
-                # if the node also has components, add those to the graph as well
-                if 'components' in attr.keys():
-                    #print('In components ...')
-                    graph[word.lower()]['components'] = list(attr['components'].keys())
-                    for comp_word in attr['components'].keys():
-                        #print('Working on ... {}'.format(comp_word))
-                        attr['components'][comp_word]['component_of'] = word.lower()
-                        [graph, new_nodes, added] = add_term_node(graph, comp_word, attr['components'][comp_word], new_nodes)
-                        if not added and comp_word.lower() in graph.keys():
-                            new_nodes = new_nodes + graph[comp_word.lower()]['add_components']
-                #print('Completed {}, now working on components added'.format(word))
-                #print(new_nodes)
-                for n in new_nodes:
-                    graph = create_graph_levels(graph, n, levels-1)
-    return graph
+    wwn            = wwnapi.wiktiwordnet()
 
-# add a node to the graph by name
-#     - annotate it with SVO class, variables, and WWN category
-#     - break up into 'components' at ADPOSITION barriers (from attr)
-#     - break up the name and components into attributes, noun groups and
-#       individual nouns
-#     - this is a recursive function so that it repeats until it gets to the "end"
-#       where a node can no longer be broken down
-def add_term_node(graph, name, attr, added=None):    
+    def __init__(self, graphfile = None, \
+                svoindexfile = 'resources/svo_index_map.txt'):
+        """
+        Intialize SciVarKG by loading from file, if provided.
 
-    # list of current graph entries
-    existing_nodes = list(graph.keys())
-    # lemma version of current node
+        Args:
+            graphfile:    A string with the path + name of json file containing
+                          the knowledge graph.
+            svoindexfile: A string with the path + name of text file containing
+                          the svo index mapping.
+        """
 
-    lemma = ' '.join(attr['lemma_seq'])
-    
-    if added is None:
-        added = []
-    was_added = False
-    # add current name to the graph if it's not already there and
-    # if it's not one of the core categories
-    if not name.lower() in existing_nodes and \
-        not name.lower() in category_names and\
-        not lemma.lower() in category_names:
-
-        was_added = True
-        #print('Adding term to graph:', name.lower())
-        # add node to the graph
-        graph[name.lower()] = { 'pos_seq': attr['pos_seq'],
-                                'lemma_seq': attr['lemma_seq']}
-                
-        # if X in Y['components'], then Y in X['component_of']
-        if 'component_of' in attr.keys():
-            if not 'component_of' in graph[name.lower()].keys():
-                graph[name.lower()]['component_of'] = [attr['component_of'].lower()]
-            elif not attr['component_of'].lower() in graph[name.lower()]['component_of']:
-                graph[name.lower()]['component_of'].append(attr['component_of'].lower())
-
-        #print('at node type attr')
-        # splitting up into type + attribute, noun components
-        [graph, added] = add_node_type_attr(graph, name.lower(), added)
-
-        #print('at wwn info')
-        # looking up its definition and category in WiktiWordNet
-        graph = add_wwn_info(graph, name.lower())
-
-        #print('at svo info')
-        # looking up its class and related variables in SVO
-        graph = add_svo_info(graph, name.lower())
-        
-        #print('at expand node')
-        [graph, new_nodes] = expand_node(graph, name.lower())
-        added = added + new_nodes
-        
-        graph[name.lower()]['add_components'] = added
-    
-    #print('Finished add term node. Added is: ', added)
-    return [graph, added, was_added]
-
-# decompose word node into attributes and a root type
-def add_node_type_attr(graph, word, added=None):
-    
-    #print('Entering add node type attr with: ', word)
-    # get attributes of current word from graph
-    pos_seq = graph[word]['pos_seq']
-    lemma_seq = graph[word]['lemma_seq']
-    
-    if added is None:
-        added = []
-    ######## temporary insert    
-    # return the type of a noun group
-    # compound - noun groups connected by adpositions
-    # modnoungrp - noun adj noun grouping
-    # modnoun - adj noun grouping
-    # noungrp - nouns only, moore than one noun
-    # noun - single noun
-    # also return the noungrp and lemma for modnoun
-    def extract_type(node_name, pos_seq, lemma_seq):
-        node_type = node_name
-        lemma = ' '.join(lemma_seq)
-        i  = 0
-        if 'ADPOSITION' in pos_seq:
-            typ = 'compound'
-        elif 'NOUN ADJECTIVE' in ' '.join(pos_seq):
-            typ = 'modnoungrp'
-        elif 'NOUN' in pos_seq and 'ADJECTIVE' in pos_seq:
-            typ = 'modnoun'
-        elif 'ADJECTIVE' in pos_seq:
-            typ = 'adj'
-        elif len(pos_seq) > 1:
-            typ = 'noungrp'
+        if graphfile is None:
+            self.graph = {}
         else:
-            typ = 'noun'
-        #print(node_name, pos_seq)
-        if not 'ADPOSITION' in pos_seq and 'NOUN' in pos_seq:
-            while (pos_seq[i] != 'NOUN') and i < len(pos_seq):
-                i = i + 1
-            if i < len(pos_seq):
-                node_type = ' '.join(node_name.split()[i:])
-                lemma = ' '.join(lemma_seq[i:])
-        return [node_type, lemma, typ]
-        
-    # separate out the node_type from attributes and its lemma sequence
-    [node_type, lemma, typ] = extract_type(word, pos_seq, lemma_seq)
+            self.load_graph(graphfile)
 
-    # if the node was broken down, then add its components
-    if (typ == 'modnoun') and (node_type != word):
-        # generate attributes for the noun part and add to graph
-        attr = {'pos_seq':['NOUN']*len(node_type.split()), 'lemma_seq': lemma.split()}
-        [graph, added, was_added] = add_term_node(graph, node_type, attr, added)
-        
-        if not 'isTypeOf' in graph[word].keys():
-            graph[word]['isTypeOf'] = [node_type]
-        elif not node_type in graph[word]['isTypeOf']:
-            graph[word]['isTypeOf'].append(node_type)
-        
-        if was_added:
-            #print('Found the new type ', node_type, 'for word ', word)
-            if not 'hasType' in graph[node_type].keys():
-                graph[node_type]['hasType'] = [word]
-            elif not word in graph[node_type]['hasType']:
-                graph[node_type]['hasType'].append(word)
-                #[graph, _] = expand_node(graph, node_type)
-        
-        # add the attributes individually
-        attrs = word.split(' '+node_type)[0]
-        lemma_num = 0
-        for attr in attrs.split():
-            
-            attr2 = {'pos_seq':['ADJECTIVE'], 'lemma_seq': [lemma_seq[lemma_num]]}
-            [graph, added, was_added] = add_term_node(graph, attr, attr2, added)
-        
-            if not 'hasAttribute' in graph[word].keys():
-                graph[word]['hasAttribute'] = [attr]
-            elif not attr in graph[word]['hasAttribute']:
-                graph[word]['hasAttribute'].append(attr)
-                
+        self.load_index_map()
+        self.load_svo_index_map(svoindexfile)
 
-            if was_added:
-                #print('Found the new attribute ', attr, 'for word ', word)
-                if not 'isAttributeOf' in graph[attr].keys():
-                    graph[attr]['isAttributeOf'] = [word]
-                elif not word in graph[attr]['isAttributeOf']:
-                    graph[attr]['isAttributeOf'].append(word)
-                
-            lemma_num += 1
-    elif typ in ['noungrp','modnoun','modnoungrp']:
-    # for noun part, also break it down into its noun components
-        [graph, added] = add_noun_components(graph, word, pos_seq, lemma_seq, added)
-    #print('Finished add node type attr with added: ', added)
-    return [graph, added]
+    def load_graph(self, filename):
+        """
+        Load knowledge graph from file.
 
-# for a noun grouping, break up into individual nouns
-def add_noun_components(graph, name, pos_seq, lemma_seq, added = None):
-    if added is None:
-        added = []
-    
-    if ' ' in name:
-        i = 0
-        for comp_name in name.split():
-            if pos_seq[i] == 'NOUN':
-                attr = {'pos_seq':[pos_seq[i]], 'lemma_seq':[lemma_seq[i]]}
-                [graph, added, was_added] = add_term_node(graph, comp_name, attr, added)
-                if not 'hasComponentNounConcept' in graph[name].keys():
-                    graph[name]['hasComponentNounConcept'] = [comp_name]
-                elif not comp_name in graph[name]['hasComponentNounConcept']:
-                    graph[name]['hasComponentNounConcept'].append(comp_name)
+        Currently whatever information is already present in graph is replaced
+        with the information loaded from file.
+
+        Args:
+            filename:     A string with the path + name of json file containing
+                          the knowledge graph.
+        """
+
+        try:
+            with open(filename) as f:
+                self.graph = json.load(f)
+        except:
+            print('Warning: could not load graph {} ...'.format(filename))
+            self.graph = {}
+
+    def write_graph(self, filename = 'resources/scivar_kg.json'):
+        """
+        Write knowledge graph to file.
+
+        Args:
+            filename:   A string with the name of the file to write to; if
+                        not provided, it defaults to writing to resources/
+                        scivar_kg.json.
+        """
+
+        graph_str = json.dumps(self.graph, indent = 4, sort_keys=True)
+
+        try:
+            with open(filename,"w") as f:
+                f.write(graph_str)
+        except:
+            print('Warning: could not write graph {} ...'.format(filename))
+            print('Call write_graph with no arguments to write to the default')
+            print('file: resources/scivar_kg.json')
 
 
-                if was_added:
-                    if not 'isComponentOf' in graph[comp_name].keys():
-                        graph[comp_name]['isComponentOf'] = [name]                    
-                    elif not name in graph[comp_name]['isComponentOf']:
-                        graph[comp_name]['isComponentOf'].append(name)
-            i += 1
-    return [graph, added]
+    def load_svo_index_map(self, svomapfilename = None):
+        """
+        Load the SVO index map from file.
 
-# pull categories and definition from WiktiWordNet
-def add_wwn_info(graph, name):
-    #print('Entering add wwn info with word: ',name)
-    lemma = ' '.join(graph[name]['lemma_seq'])
-    categories = wwn.get_category(name.lower())
-    if (categories == {}) and (lemma != ''):
-        categories = wwn.get_category(lemma.lower())
-    
-    for category in categories.keys():
-        if not 'hasWWNCategory' in graph[name].keys():
-            graph[name]['hasWWNCategory'] = [category]
-        elif not category in graph[name]['hasWWNCategory']:
-            graph[name]['hasWWNCategory'].append(category)
-        
-        definition = categories[category]
-        if not 'hasWWNDefinition' in graph[name].keys():
-            graph[name]['hasWWNDefinition'] = [definition]
-        elif not definition in graph[name]['hasWWNDefinition']:
-            graph[name]['hasWWNDefinition'].append(definition)
-    #print('Finishing add wwn info with added: ',added)    
-    return graph
+        To save space in the knowledge graph, SVO information is provided as
+        a hashed value. The annotation information for each hashed value,
+        including the SVO entity URI information and entity label, are
+        stored in svo_index_map.
 
-def add_svo_index_map(svo):
-    svo_namespace = svo['entity'].split('/')[-1].split('#')[0]
-    svo_entity = svo['entity'].split('#')[-1]
-    svo_hash = hash(svo_namespace + svo_entity)    
-    svo_label = svo['entitypreflabel']
-    svo_class = svo['entityclass']
-    if not svo_hash in svo_index_map.keys():
-        svo_index_map[svo_hash] = {'namespace': svo_namespace, 'entity':svo_entity, 
-                                   'preflabel': svo_label, 'class':svo_class}
-    elif svo_index_map[svo_hash]['entity'] != svo_entity:
-            print('Ooops! Overlapping hash: {}, {}'.format(svo_entity, svo_index_map[svo_hash]))
+        Args:
+            svomapfilename: A string with the name of the file containing the
+                            SVO index map.
+        """
 
-def print_svo_index_map():
-    with open('resources/svo_index_map.txt','w') as f:
-        for hashi, val in svo_index_map.items():
-            f.write('hash,{}\n'.format(hashi))
-            for svotag, val2 in val.items():
-                f.write('{},{}\n'.format(svotag, val2))
-
-def get_svo_index_map():
-    return svo_index_map
-
-def load_svo_index_map():
-    with open('resources/svo_index_map.txt', 'r') as f:
-        hashval = None
-        for line in f:
-            category = line.split(',')[0]
-            val = line.split(',')[1].strip('\n\r')
-            if category == 'hash':
-                if not hashval is None:
-                    svo_index_map[hashval] = element
-                element = {}
-                hashval = val
+        self.svo_index_map = {}
+        hash_map = {}
+        svo_pref = 'http://www.geoscienceontology.org/svo/svl/'
+        if not svomapfilename is None:
+            if path.exists(svomapfilename):
+                with open(svomapfilename, 'r') as f:
+                    hashval = None
+                    for line in f:
+                        category = line.split(',')[0]
+                        val = line.split(',')[1].strip('\n\r')
+                        if category == 'hash':
+                            if not hashval is None:
+                                newhash = hash( svo_pref + element['namespace'] + \
+                                               '#' + element['entity'] )
+                                self.svo_index_map[newhash] = element
+                                hash_map[hashval] = newhash
+                            element = {}
+                            hashval = val
+                        else:
+                            element[category] = val
+                    self.update_svo_hash(hash_map)
             else:
-                element[category] = val
-    return svo_index_map
+                print('ERROR: Could not read SVO index map from {}.'\
+                      .format(filename))
 
-# pull classes and variables from SVO
-def add_svo_info(graph, name):
-    
-    if path.exists('resources/svo_index_map.txt'):
-        svo_index_map = load_svo_index_map()
-    if (len(name.split()) == 1):
-        #print('Search for SVO class and variables...')
-        lemma = ' '.join(graph[name.lower()]['lemma_seq'])
-        results = svoapi.rank_search([name.lower(), lemma.lower()])
-    
-        exact_match = results.loc[results['rank']==1]
-        variable_match = results.loc[(results['entityclass']=='Variable') & (results['rank']!=1)]
-        other_match = results.loc[(results['entityclass']!='Variable') & (results['rank']!=1)]
+    def update_svo_hash(self, hash_map):
+        """
+        Reset SVO hash values with new kernel. Discard unmapped SVO hashes.
 
-        entity_match = np.unique(exact_match['entity'].tolist())
-        for entity in entity_match:
-            exact_match_entity = exact_match[exact_match['entity']==entity]
-            exact_match_label = list(np.unique(exact_match_entity['entitylabel'].tolist()))
-            if len(exact_match_label) < len(exact_match_entity):
-                print('Exact match label found twice: {}', entity)
-            add_svo_index_map(exact_match_entity.iloc[0])
-            
-            svo_namespace = entity.split('/')[-1].split('#')[0]
-            svo_entity = entity.split('#')[-1]
-            svo_hash = hash(svo_namespace+svo_entity)
-            svo_class = exact_match_entity['entityclass'].iloc[0]
-            if not 'hasSVOMatch' in graph[name.lower()].keys():
-                graph[name.lower()]['hasSVOMatch'] = {svo_class: [svo_hash]}
-            elif not svo_class in graph[name.lower()]['hasSVOMatch']:
-                graph[name.lower()]['hasSVOMatch'][svo_class] = [svo_hash]
-            elif not svo_hash in graph[name.lower()]['hasSVOMatch'][svo_class]:
-                graph[name.lower()]['hasSVOMatch'][svo_class].append(svo_hash)
-                
-        entity_match = np.unique(variable_match['entity'].tolist())
-        for entity in entity_match:
-            var_match_entity = variable_match[variable_match['entity']==entity]
-            var_match_label = list(np.unique(var_match_entity['entitylabel'].tolist()))
-            add_svo_index_map(var_match_entity.iloc[0])
-            
-            svo_namespace = entity.split('/')[-1].split('#')[0]
-            svo_entity = entity.split('#')[-1]
-            svo_hash = hash(svo_namespace+svo_entity)
-            rank = min(sum(var_match_entity['rank'].tolist()),.9)
-            if not 'hasSVOVar' in graph[name.lower()].keys():
-                graph[name.lower()]['hasSVOVar'] = {svo_hash: rank}
-            elif not svo_hash in graph[name.lower()]['hasSVOVar'].keys():
-                graph[name.lower()]['hasSVOVar'][svo_hash] = rank
-                
-        entity_match = np.unique(other_match['entity'].tolist())
-        for entity in entity_match:
-            other_match_entity = other_match[other_match['entity']==entity]
-            other_match_label = list(np.unique(other_match_entity['entitylabel'].tolist()))
-            add_svo_index_map(other_match_entity.iloc[0])
-            
-            svo_namespace = entity.split('/')[-1].split('#')[0]
-            svo_entity = entity.split('#')[-1]
-            svo_hash = hash(svo_namespace+svo_entity)
-            rank = min(sum(other_match_entity['rank'].tolist()),.9)
-            if not 'hasSVOEntity' in graph[name.lower()].keys():
-                graph[name.lower()]['hasSVOEntity'] = {svo_hash: rank}
-            elif not svo_hash in graph[name.lower()]['hasSVOEntity'].keys():
-                graph[name.lower()]['hasSVOEntity'][svo_hash] = rank
+        Args:
+            hash_map: A dictionary mapping old hash values to new hash values.
+        """
         
-    return graph
-
-# expand an individual node by grabbing its definitions
-def expand_node(graph, word):
-    
-    #print('Entering expand node with: ', word)
-    if not word in category_names:
-        # a given node can be expanded by: looking up its related terms in Wikipedia
-        [graph, added_nodes] = add_wikipedia_def(graph, word, long=True)
-
-        # or parsing its WWN defintion
-        [graph, added_nodes] = add_wwn_def(graph, word, added_nodes)
-
-        # or ...
-    
-        #print('Finishing expand node for ', word, ' and added: ', added_nodes)    
-    return [graph, added_nodes]
-
-def add_wikipedia_def(graph, name, added = None, long = False):
-    #print('Entering add wikip def with word: ',name)
-    
-    # initialize added if not passed
-    if added is None:
-        added = []
-        
-    # grab Wikipedia page information
-    #print('Entering Wikipedia search')
-    [text, disambig, title, redirecttitle] = wapi.get_wikipedia_text(name)
-    text = pt.ParsedDoc(text)
-    lemma = ' '.join(graph[name.lower()]['lemma_seq'])
-    #print('Wikipedia search finished')
-    
-    # only parse definition if not a disambiguation page
-    if not disambig:
-        
-        # set name to use to the name passed
-        use_name = name.lower()
-        syn = '('+name.lower()+')' in title.lower().replace('\s+','') or\
-              '('+lemma.lower()+')' in title.lower().replace('\s+','') or\
-              '('+name.lower()+')' in redirecttitle.lower().replace('\s+','') or\
-              '('+lemma.lower()+')' in redirecttitle.lower().replace('\s+','')
-        #if syn:
-        #    print('syn is True: {}, {}', use_name, title.lower())
-        # if either the lemma or name are equal to the redirect title or title, reset use_name to title
-        if (name.lower() == redirecttitle.lower()) or (lemma.lower() == title.lower()) or \
-            (lemma.lower() == redirecttitle.lower()) or syn:
-            use_name = title.lower()
-        
-        # if Wikipedia page found is not a good match (e.g., not a synonym/redirect), then add it
-        # to the attributes as related, but do not create a new node for it (this is a stub)
-        graph = add_related(graph, use_name, title, name.lower())
-        #print('Parsing Wikipedia page ...', title, name.lower())
-        # find is paragraph based on use_name; default to title if not found and title is different
-        p = text.find_is_nsubj(use_name)
-        name_found = ''
-        pno = -1
-        if not p is None:
-            pno = list(p.keys())[0]
-            name_found = use_name
-            sno = p[pno][0]
-        #print('Finished parsing Wikipedia page. The name found was: ', name_found, 'and the paragraph was par no')
-        #print(pno,' starting with ...', text[pno][0])
-        # if name_found is use_name
-        if (pno != -1) and (name_found.lower() == use_name.lower()):
-            #if name_found.lower() != name.lower():
-            #    def_noun_groups = pt.parse_noun_groups(name_found.lower())
-            #    if name_found.lower() in def_noun_groups[1].keys():
-            #        attr = def_noun_groups[1][name_found.lower()]
-            #        [graph, added] = add_term_node(graph, name_found.lower(), attr, added)
-            #    else:
-            #        name_found = name.lower()
-            # parse the first paragraph or all of the text based on "long" setting
-            def_noun_groups = {}
-            for sno in text.paragraphs[pno].sentences.keys():
-                def_noun_groups[sno] = text.paragraphs[pno].sentences[sno].noun_groups.ng
-            #print(def_noun_groups)
-        
-            [graph, added] = add_definition(graph, name.lower(), name_found, def_noun_groups, added)
-            
-            if long:
-                noun_groups_index = text.get_term_noun_groups(name_found.lower())
-                graph = add_dimensions(graph, name.lower(), name_found.lower(), noun_groups_index)
-                #print('Printed modifed names: {} to {}'\
-                #      .format(name_found.lower(), name.lower()))
-    #print('Finishing add wikip def with added: ',added)        
-    return [graph, added]
-
-# add related/synonym Wikipedia concepts
-def add_related(graph, name, title, name_orig):
-    
-    # name is related to, but not a synonym for the page
-    # no new node added
-    if (name.lower() != title.lower()):
-        src = name.lower()
-        dest = title.lower()
-        if not 'isRelatedTo' in graph[src].keys():
-            graph[src]['isRelatedTo'] = [dest]
-        elif not dest in graph[src]['isRelatedTo']:
-            graph[src]['isRelatedTo'].append(dest)
-    # name is a synonym, do not add a new node
-    if (name.lower() != name_orig.lower()):
-        src = name_orig.lower()
-        dest = name.lower()
-        if not 'hasSynonym' in graph[src].keys():
-            graph[src]['hasSynonym'] = [dest]
-        elif not dest in graph[src]['hasSynonym']:
-            graph[src]['hasSynonym'].append(dest)
-    return graph
-
-# Add Wikipedia definition components
-def add_definition(graph, name, name_found, nodes_par, added):           
-    
-    # added contains the names of nodes that were added during this pass
-    if added is None:
-        added = []
-    
-    edge_label = 'isDefinedBy'
-    
-    max_i = min(len(nodes_par.keys()), 3)
-    for i in range(1,max_i):
-        nodes = nodes_par[i]
-        if i == 1:
-            edge_label = 'isDefinedBy'
-        else:
-            edge_label = 'isClsRel'
-        for (node_name, attr) in nodes.items():
-            if node_name.lower() != name_found.lower():
-                #[graph, was_added] = add_term_node(graph, node_name, attr)
-                if (i == 1):
-                    added.append(node_name)
-                if not edge_label in graph[name.lower()].keys():
-                    graph[name.lower()][edge_label] = [node_name.lower()]
-                elif not node_name.lower() in graph[name.lower()][edge_label]:
-                    graph[name.lower()][edge_label].append(node_name.lower())
-    return [graph, added]
-
-def add_dimensions(graph, name, name_found, noun_groups_index):
-    modified = noun_groups_index.loc[noun_groups_index['modified'],'noun_group'].tolist()
-    aspects = noun_groups_index.loc[noun_groups_index['aspects'],'noun_group'].tolist()
-    graph[name]['modified_terms'] = [x for x in modified if x != name_found]
-    graph[name]['term_aspects'] = [x for x in aspects if x != name_found]
-    return graph
-
-# parse WiktiWordNet definition
-def add_wwn_def(graph, name, added = None):
-    if added is None:
-        added = []
-        
-    if 'hasWWNDefinition' in graph[name.lower()].keys():
-        for definition in graph[name.lower()]['hasWWNDefinition']:
-            def_parsed = pt.ParsedParagraph(definition)
-            def_noun_groups = def_parsed.sentences[1].noun_groups.ng
-            for ng, attr in def_noun_groups.items():
-                added.append(ng)
-                if ng.lower() != name.lower():
-                    if not 'isWWNDefinedBy' in graph[name.lower()].keys():
-                        graph[name.lower()]['isWWNDefinedBy'] = [ng.lower()]
-                    elif not ng.lower() in graph[name.lower()]['isWWNDefinedBy']:
-                        graph[name.lower()]['isWWNDefinedBy'].append(ng.lower())
-    return [graph, added]
-
-def graph_inference(graph, index_map_file):
-    [graph, index_map] = update_synonyms_bank(graph, index_map_file)
-    graph = graph_define_category(graph)
-    graph = graph_add_var_entity_links(graph, index_map)
-    return [graph, index_map]
-
-def update_synonyms_bank(graph, index_map_file):
-    if index_map_file is None:
-        index_map = {}
-        for key in graph.keys():
-            index_map[key] = key
-    else:
-        with open(index_map_file) as f:
-            index_map = json.load(f)
-    
-    [graph, index_map] = update_synonyms(graph, index_map)
-    
-    return [graph, index_map]
-
-def update_synonyms(graph, index_map):
-    
-    transfer_links_dict = ['hasSVOVar', 'hasSVOEntity', 'hasSVOMatch','hasWMIndicator']
-    transfer_links_list =  ['isDefinedBy','isWWNDefinedBy', 'hasWWNCategory', 'hasWWNDefinition']
-    link = 'hasSynonym'
-    rem_nodes = []
-    for name in graph.keys():
-        if not name in index_map.keys():
-            index_map[name] = name
-        if link in graph[name].keys():
-            for synonym in graph[name][link]:
-                if synonym in graph.keys():
-                    rem_nodes.append(synonym)
-                    index_map[synonym] = name
+        terms = self.graph.keys()
+        i = 1
+        entity = False
+        var = False
+        match = False
+        for term in terms:
+            keys = self.graph[term].keys()
+            for rel in ['hasSVOVar', 'hasSVOEntity']:
+                if rel in keys:
+                    svovar = self.graph[term][rel]
+                    reindex = {}
+                    j = 1
+                    for svo_i, svo_rank in svovar.items():
+                        try:
+                            reindex[hash_map[svo_i]] = svo_rank
+                        except:
+                            #print('Could not map SVO hash: {}.'.format(svo_i))
+                            pass
+                    self.graph[term][rel] = reindex
+            if 'hasSVOMatch' in keys:
+                svomatch = self.graph[term]['hasSVOMatch']
+                reindex = {}
+                for svo_cat, lst in svomatch.items():
+                    reindex[svo_cat] = [ hash_map[str(x)] for x in lst ]
+                self.graph[term]['hasSVOMatch'] = reindex
                     
-    new_graph = {}
-    for key, val in graph.items():
-        if not key in rem_nodes:
-            new_graph[key] = val
-        else:
-            for key_t, val_t in graph[key].items():
-                if key_t in transfer_links_list:
-                    for v in val_t:
-                        if key_t in graph[index_map[key]].keys() and \
-                            not v in graph[index_map[key]][key_t]:
-                            graph[index_map[key]][key_t].append(v)
-                        else:
-                            graph[index_map[key]][key_t] = [v]
-                elif key_t in transfer_links_dict:
-                    for k, v in graph[key][key_t].items():
-                        if (key_t != 'hasSVOMatch'):
-                            if key_t in graph[index_map[key]].keys() and \
-                                k in graph[index_map[key]][key_t].keys():
-                                graph[index_map[key]][key_t][k] = \
-                                max(graph[index_map[key]][key_t][k], v)
-                            elif key_t in graph[index_map[key]].keys() and \
-                                not k in graph[index_map[key]][key_t].keys():
-                                graph[index_map[key]][key_t][k] = v
-                            elif not key_t in graph[index_map[key]].keys():
-                                graph[index_map[key]][key_t] = {k : v}
-                        else:
-                            if key_t in graph[index_map[key]].keys() and \
-                                k in graph[index_map[key]][key_t].keys() and \
-                                not v in graph[index_map[key]][key_t][k]:
-                                graph[index_map[key]][key_t][k].append(v)
-                            elif key_t in graph[index_map[key]].keys() and \
-                                not k in graph[index_map[key]][key_t].keys():
-                                graph[index_map[key]][key_t][k] = [v]
-                            
-                
-    return [new_graph, index_map]
-
-def graph_define_category(graph):
-    # categorize terms as
-    #     - 'sn': single noun x
-    #     - 'a':  adjective x
-    #     - 'ng': noun group
-    #     - 'an': noun or noun group with adjective modifier
-    #     - 'adpof': grouping linked with 'of' adposition
-    #     - 'adp': grouping NOT linked with 'of' adposition
-    
-    for term in graph.keys():
-        if graph[term]['pos_seq'] == ['ADJECTIVE']:
-            graph[term]['termtype'] = 'a'
-            graph[term]['detSVOCategory'] = 'Attribute'
-        elif graph[term]['pos_seq'] == ['NOUN']:
-            graph[term]['termtype'] = 'sn'
-            if 'hasSVOMatch' in graph[term].keys() or \
-                'hasWWNCategory' in graph[term].keys():
-                if 'hasSVOMatch' in graph[term].keys():
-                    classes = list(graph[term]['hasSVOMatch'].keys())
-                else:
-                    classes = graph[term]['hasWWNCategory']
-                graph[term]['detSVOCategory'] = 'Phenomenon'
-                if 'Phenomenon' in classes or 'Matter' in classes or \
-                    'Role' in classes:
-                    graph[term]['detSVOCategory'] = 'Phenomenon'
-                elif 'Property' in classes:
-                    graph[term]['detSVOCategory'] = 'Property'
-                elif 'Attribute' in classes:
-                    graph[term]['detSVOCategory'] = 'Attribute'
-                elif 'Process' in classes:
-                    graph[term]['detSVOCategory'] = 'Process'
-                else:
-                    graph[term]['detSVOCategory'] = classes[0]
-            else:
-                # default when we don't know ...
-                graph[term]['detSVOCategory'] = 'Phenomenon'
-        elif 'hasComponentNounConcept' in graph[term].keys():
-            graph[term]['termtype'] = 'ng'
-        elif 'isTypeOf' in graph[term].keys():
-            graph[term]['termtype'] = 'an'
-        elif 'components' in graph[term].keys() and ' of ' in term:
-            graph[term]['termtype'] = 'adpof'
-        else:
-            graph[term]['termtype'] = 'adp'
-            graph[term]['detSVOCategory'] = 'Phenomenon'
             
-    # single nouns and adjectives have been categorized
-    # now categorize compound nouns:
-    for term in graph.keys():
-        if graph[term]['termtype'] == 'ng':
-            graph[term]['detSVOCategory'] = 'Phenomenon'
-            # gather all of the types and count:
-            categories = {}
-            for component in graph[term]['hasComponentNounConcept']:
-                try:
-                    cat = graph[component]['detSVOCategory']
+    def add_svo_index_map(self, svo):
+        """
+        Add SVO hash to svo_index_map.
+
+        Args:
+            svo : The SVO entity to add to the index map.
+        """
+
+        svo_namespace = svo['entity'].split('/')[-1].split('#')[0]
+        svo_entity    = svo['entity'].split('#')[-1]
+        svo_hash      = hash(svo_namespace + svo_entity)
+        svo_label     = svo['entitypreflabel']
+        svo_class     = svo['entityclass']
+        if not svo_hash in self.svo_index_map.keys():
+            self.svo_index_map[svo_hash] = { 'namespace' : svo_namespace,
+                                             'entity'    : svo_entity,
+                                             'preflabel' : svo_label,
+                                             'class'     : svo_class }
+        elif self.svo_index_map[svo_hash]['entity'] != svo_entity:
+            print( 'Ooops! Overlapping hash: {}, {}'\
+                   .format(svo_entity, self.svo_index_map[svo_hash]) )
+
+    def write_svo_index_map(self, svomapfilename = \
+                                                'resources/svo_index_map.txt'):
+        """
+        Write the SVO index map to file.
+
+        To save space in the knowledge graph, SVO information is provided as
+        a hashed value. The annotation information for each hashed value,
+        including the SVO entity URI information and entity label, are
+        stored in svo_index_map. This can be saved to file and reloaded for
+        future use.
+
+        Args:
+            svomapfilename: A string with the name of the file containing the
+                            SVO index map.
+        """
+
+
+        try:
+            with open(svomapfilename, 'w') as f:
+                for hashval, attr in self.svo_index_map.items():
+                    f.write('hash,{}\n'.format(hashval))
+                    for key, val in attr.items():
+                        f.write('{},{}\n', hashval)
+        except:
+            print('ERROR: Could not write SVO index map to {}.'\
+                      .format(svomapfilename))
+            print('Call write_svo_index_map with no arguments to write to the')
+            print('default file: resources/svo_index_map.txt')
+
+    def load_index_map(self, index_map_file = None):
+        """
+        Initialize index map with all synonyms.
+
+        The index_map serves as the lookup table for synonyms.
+        """
+
+        self.index_map = {}
+
+        if index_map_file is None:
+            for key in self.graph.keys():
+                self.index_map[key] = key
+        else:
+            with open(index_map_file) as f:
+                self.index_map = json.load(f)
+
+            self.update_synonyms()
+
+    def update_synonyms(self):
+        """
+        Update index map to ensure it agrees with graph information.
+
+        The index_map serves as the lookup table for synonyms.
+
+        Algorithm:
+            First create the index map. Each key points to itself.
+            If the key has any synonyms, these point to that key.
+            At the moment, the synonym only points to one key (the first
+            one that is encountered when searching the graph).
+            If the synonym nodes are present, they are first merged
+            with the existing graph and then they are removed. Merged
+            information is limited to that pointed to by links in
+            transfer_links_dict and transfer_links_list.
+        """
+
+        transfer_links_dict = [ 'hasSVOVar', 'hasSVOEntity', 'hasSVOMatch',
+                                'hasWMIndicator']
+        transfer_links_list = [ 'isDefinedBy','isWWNDefinedBy',
+                                'hasWWNCategory', 'hasWWNDefinition']
+        link = 'hasSynonym'
+
+        rem_nodes = []
+        for name, attr in self.graph.keys():
+            if not name in self.index_map.keys():
+                self.index_map[name] = name
+            if link in attr.keys():
+                for synonym in attr[link]:
+                    if synonym in self.graph.keys():
+                        rem_nodes.append(synonym)
+                    if not synonym in self.index_map.keys():
+                        self.index_map[synonym] = name
+
+        new_graph = {}
+        for key, val in self.graph.items():
+            if not key in rem_nodes:
+                new_graph[key] = val
+
+        for key, val in self.graph.items():
+            new_index = self.index_map[key]
+            if key in rem_nodes:
+                for key_t, val_t in val.items():
+                    if key_t in transfer_links_list:
+                        for v in val_t:
+                            if key_t in new_graph[new_index].keys() and \
+                                not v in new_graph[new_index][key_t]:
+                                new_graph[new_index][key_t].append(v)
+                            else:
+                                new_graph[new_index][key_t] = [v]
+                    elif key_t in transfer_links_dict:
+                        for k, v in val_t.items():
+                            if (key_t != 'hasSVOMatch'):
+                                if key_t in new_graph[new_index].keys() and \
+                                    k in new_graph[new_index][key_t].keys():
+                                    new_graph[new_index][key_t][k] = \
+                                        max(new_graph[new_index][key_t][k], v)
+                                elif key_t in new_graph[new_index].keys() and \
+                                    not k in new_graph[new_index][key_t].keys():
+                                    new_graph[new_index][key_t][k] = v
+                                elif not key_t in new_graph[new_index].keys():
+                                    new_graph[new_index][key_t] = {k : v}
+                            else:
+                                if key_t in new_graph[new_index].keys() and \
+                                    k in new_graph[new_index][key_t].keys() and \
+                                    not v in new_graph[new_index][key_t][k]:
+                                    new_graph[new_index][key_t][k].append(v)
+                                elif key_t in new_graph[new_index].keys() and \
+                                    not k in new_graph[new_index][key_t].keys():
+                                    new_graph[new_index][key_t][k] = [v]
+        self.graph = new_graph
+
+    def add_index_map(self, index, synonym):
+        """
+        Add synonym index to index map.
+
+        Args:
+            filename:   A string with the name of the file to write to; if
+                        not provided, it defaults to writing to resources/
+                        scivar_kg.json.
+        """
+
+        index_keys = list(self.index_map.keys())
+        graph_keys = list(self.graph.keys())
+        if not synonym in index_keys and index in graph_keys:
+            self.index_map[synonym] = index
+
+    def write_index_map(self, filename = 'resources/index_map.json'):
+        """
+        Write index map to file.
+
+        Args:
+            filename:   A string with the name of the file to write to; if
+                        not provided, it defaults to writing to resources/
+                        index_map.json.
+        """
+
+        graph_str = json.dumps(self.index_map, indent = 4, sort_keys=True)
+
+        try:
+            with open(filename,"w") as f:
+                f.write(graph_str)
+        except:
+            print('Warning: could not write index map to {}.'.format(filename))
+            print('Call write_index_map() to write to the default')
+            print('file: resources/index_map.json')
+
+    def add_concept(self, var, depth = 1):
+        """
+        Add a concept "node" to the graph.
+
+        Args:
+            var:   A string containing the variable to add.
+            depth: An integer indicating the "depth" to which the node
+                   should be expanded. A value greater than 3 is not allowed
+                   because it would both deviate too much from the original
+                   variable and it would be very time expensive.
+        """
+
+        if depth > 3:
+            print('Warning, depth is too large, resetting to 3 ...')
+            depth = 3
+
+        self.create_concept_levels(var, depth)
+
+    def get_children(self, node_name):
+        """
+        Get the children of a node by name.
+
+        The children of a node are those that are connected to the desired node
+        by the relationships: 'components', 'isDefinedBy', 'isWWNDefinedBy'
+
+        Args:
+            node_name:   A string label of the desired node.
+        """
+
+        children = []
+
+        if node_name in self.index_map.keys():
+            name_index = self.index_map[node_name]
+            if 'isDefinedBy' in self.graph[name_index].keys():
+                children.extend(self.graph[name_index]['isDefinedBy'])
+            if 'isWWNDefinedBy' in self.graph[name_index].keys():
+                children.extend(self.graph[name_index]['isWWNDefinedBy'])
+
+        return children
+
+    def create_concept_levels(self, variable = '', depth = 0):
+        """
+        Expand a concept "node" to 'depth' amount (eg. performing depth
+        iterations).
+
+        Args:
+            variable:   A string containing the variable to add.
+            depth:      An integer indicating the "depth" to which the node
+                        should be expanded. A value greater than 3 is not
+                        allowed because it would both deviate too much from the
+                        original variable and it would be very time expensive.
+        """
+
+        if (depth > 0) and (variable != ''):
+
+            parsed_variable = pt.ParsedParagraph(variable)
+            noun_groups = parsed_variable.get_noun_groups()
+
+            for pno, ng in noun_groups.items():
+                for ng_name, attr in ng.items():
+                    noung = ng_name.lower()
+                    self.add_term_node(noung, attr)
+
+                    new_nodes = self.get_children(noung)
+                    for n in new_nodes:
+                        self.create_concept_levels(n, depth-1)
+
+    def add_term_node(self, name, attr):
+        """
+        Add a node to the graph.
+
+        Algorithm:
+            The following components are added for the node:
+            - annotate with SVO class, variables, and WWN category
+            - break up into 'components' at ADPOSITION barriers (from attr)
+            - break up the name and components into attributes, noun groups and
+              individual nouns
+            - this is a recursive function so that it repeats until it gets to
+              the "end" where a node can no longer be broken down
+
+        Args:
+            name:   A string containing the node name to add.
+            attr:   A dict containing key-value pairs as parsed and
+                    generated by parse_tools when parsing a document.
+        """
+
+        existing_nodes = list(self.index_map.keys())
+        lemma = ' '.join(attr['lemma_seq']).lower()
+        name_lower = name.lower()
+
+        if not name_lower in existing_nodes and \
+            not name_lower in self.category_names and\
+            not lemma in self.category_names:
+
+            self.graph[name_lower] = { 'pos_seq'   : attr['pos_seq'],
+                                       'lemma_seq' : attr['lemma_seq'],
+                                       'type'      : attr['type']       }
+            self.add_index_map(name_lower, name_lower)
+
+            self.add_components(name_lower, attr)
+            self.add_type_attr(name_lower, attr)
+            self.add_noun_components(name_lower, attr)
+
+            self.add_wwn_info(name_lower)
+            self.add_svo_info(name_lower)
+            self.expand_node(name_lower)
+
+
+    def add_components(self, word, attr):
+        """
+        Add word components/component_of relationships.
+
+        Args:
+            word:       A string the label of the current node.
+            attr:       A dict with the attr value pairs of the corresponding
+                        word as parsed with parse_tools.
+        """
+
+        word_index = self.index_map[word]
+
+        if 'components' in attr.keys():
+            components_list = list(attr['components'].keys())
+            if not 'hasComponents' in self.graph[word].keys():
+                self.graph[word_index]['hasComponents'] = components_list
+            else:
+                self.graph[word_index]['hasComponents'].extend(components_list)
+
+            for comp_word in attr['components'].keys():
+                comp_lower = comp_word.lower()
+                comp_attr = attr['components'][comp_lower]
+                comp_attr['component_of'] = word
+                self.add_term_node( comp_lower, comp_attr )
+
+        if 'component_of' in attr.keys():
+            comp_of = attr['component_of'].lower()
+            if not 'isComponentOf' in self.graph[word_index].keys():
+                self.graph[word_index]['isComponentOf'] = comp_of
+            elif not comp_of in graph[word_index]['isComponentOf']:
+                self.graph[word_index]['isComponentOf'].append(comp_of)
+
+    def add_type_attr(self, word, attr):
+        """
+        Decompose word node into attributes and a root noun type.
+
+        Args:
+            word:       A string the label of the current node.
+            attr:       A dict with the attr value pairs of the corresponding
+                        word as parsed with parse_tools.
+        """
+
+        word_index = self.index_map[word]
+
+        if 'has_type' in attr.keys():
+            for node_type, nt_attr in attr['has_type'].items():
+                self.add_term_node(node_type, nt_attr)
+
+                if not 'isTypeOf' in self.graph[word_index].keys():
+                    self.graph[word_index]['isTypeOf'] = [node_type]
+                elif not node_type in self.graph[word_index]['isTypeOf']:
+                    self.graph[word_index]['isTypeOf'].append(node_type)
+
+                if not 'hasType' in self.graph[node_type].keys():
+                    self.graph[node_type]['hasType'] = [word]
+                elif not word in graph[node_type]['hasType']:
+                    self.graph[node_type]['hasType'].append(word)
+
+        if 'has_attribute' in attr.keys():
+            for node_attr, na_attr in attr['has_attribute'].items():
+                self.add_term_node(node_attr, na_attr)
+
+                if not 'hasAttribute' in self.graph[word_index].keys():
+                    self.graph[word_index]['hasAttribute'] = [node_attr]
+                elif not node_attr in graph[word_index]['hasAttribute']:
+                    self.graph[word_index]['hasAttribute'].append(node_attr)
+
+                if not 'isAttributeOf' in self.graph[node_attr].keys():
+                    self.graph[node_attr]['isAttributeOf'] = [word]
+                elif not word in self.graph[node_attr]['isAttributeOf']:
+                    self.graph[node_attr]['isAttributeOf'].append(word)
+
+    def add_noun_components(self, name, attr):
+        """
+        Decompose noungrp word node into component nouns.
+
+        Args:
+            name : A string the label of the current node.
+            attr : A dict with the attr value pairs of the corresponding
+                   word as parsed with parse_tools.
+        """
+
+        name_index = self.index_map[name]
+
+        if attr['type'] == 'noungrp':
+            lemma_seq = attr['lemma_seq']
+            i = 0
+            for comp_name in name.split():
+                attr2 = {'pos_seq':['NOUN'], 'lemma_seq':[lemma_seq[i]]}
+                self.add_term_node(comp_name, attr2)
+                if not 'hasComponents' in self.graph[name_index].keys():
+                    self.graph[name_index]['hasComponents'] = [comp_name]
+                elif not comp_name in self.graph[name_index]['hasComponents']:
+                    self.graph[name_index]['hasComponents'].append(comp_name)
+
+                comp_index = self.index_map[comp_name]
+                if not 'isComponentOf' in self.graph[comp_index].keys():
+                    self.graph[comp_index]['isComponentOf'] = [name]
+                elif not name in self.graph[comp_index]['isComponentOf']:
+                    self.graph[comp_index]['isComponentOf'].append(name)
+                i += 1
+
+    def add_wwn_info(self, name):
+        """
+        Pull categories and definition of a term from WiktiWordNet.
+
+        Args:
+            name:       A string the label of the current node.
+        """
+
+        name_index = self.index_map[name]
+
+        lemma = ' '.join(self.graph[name]['lemma_seq']).lower()
+        categories = self.wwn.get_category(name)
+        if (categories == {}) and (lemma != ''):
+            categories = self.wwn.get_category(lemma)
+
+        for category in categories.keys():
+            if not 'hasWWNCategory' in self.graph[name_index].keys():
+                self.graph[name_index]['hasWWNCategory'] = [category]
+            elif not category in graph[name_index]['hasWWNCategory']:
+                self.graph[name_index]['hasWWNCategory'].append(category)
+
+            definition = categories[category]
+            if not 'hasWWNDefinition' in self.graph[name_index].keys():
+                self.graph[name_index]['hasWWNDefinition'] = [definition]
+            elif not definition in graph[name_index]['hasWWNDefinition']:
+                self.graph[name_index]['hasWWNDefinition'].append(definition)
+
+    def add_svo_info(self, name):
+        """
+        Pull entities and variables from SVO, divide into exact match, non-exact
+        variable match, and non-exact, non-variable entity match.
+
+        Args:
+            name : A string the label of the current node.
+        """
+
+        name_index = self.index_map[name]
+
+        if (len(name.split()) == 1):
+            lemma = self.graph[name_index]['lemma_seq'][0]
+            results = svoapi.rank_search([name, lemma])
+
+            exact_match    = results.loc[results['rank']==1]
+            variable_match = results.loc[(results['entityclass']=='Variable') & \
+                                         (results['rank']!=1)]
+            other_match    = results.loc[(results['entityclass']!='Variable') & \
+                                         (results['rank']!=1)]
+
+            entity_match = np.unique(exact_match['entity'].tolist())
+            for entity in entity_match:
+                exact_match_entity = exact_match[exact_match['entity']==entity]
+                exact_match_label = list(np.unique( \
+                                    exact_match_entity['entitylabel'].tolist()))
+                if len(exact_match_label) < len(exact_match_entity):
+                    print('Exact match label found twice: {}', entity)
+                self.add_svo_index_map(exact_match_entity.iloc[0])
+
+                svo_namespace = entity.split('/')[-1].split('#')[0]
+                svo_entity = entity.split('#')[-1]
+                svo_hash = hash(svo_namespace+svo_entity)
+                svo_class = exact_match_entity['entityclass'].iloc[0]
+                if not 'hasSVOMatch' in self.graph[name_index].keys():
+                    self.graph[name_index]['hasSVOMatch'] = \
+                                                { svo_class : [svo_hash] }
+                elif not svo_class in self.graph[name_index]['hasSVOMatch']:
+                    self.graph[name_index]['hasSVOMatch'][svo_class] = \
+                                                [svo_hash]
+                elif not svo_hash in \
+                    self.graph[name_index]['hasSVOMatch'][svo_class]:
+                    self.graph[name_index]['hasSVOMatch'][svo_class]\
+                        .append(svo_hash)
+
+            entity_match = np.unique(variable_match['entity'].tolist())
+            for entity in entity_match:
+                var_match_entity = variable_match[\
+                                            variable_match['entity']==entity]
+                var_match_label = list(np.unique(var_match_entity['entitylabel']\
+                                        .tolist()))
+                self.add_svo_index_map(var_match_entity.iloc[0])
+
+                svo_namespace = entity.split('/')[-1].split('#')[0]
+                svo_entity = entity.split('#')[-1]
+                svo_hash = hash(svo_namespace+svo_entity)
+                rank = min(sum(var_match_entity['rank'].tolist()),.9)
+                if not 'hasSVOVar' in self.graph[name_index].keys():
+                    self.graph[name_index]['hasSVOVar'] = { svo_hash : rank }
+                elif not svo_hash in self.graph[name_index]['hasSVOVar'].keys():
+                    self.graph[name_index]['hasSVOVar'][svo_hash] = rank
+                else:
+                    self.graph[name_index]['hasSVOVar'][svo_hash] = max(rank, \
+                        self.graph[name_index]['hasSVOVar'][svo_hash])
+
+            entity_match = np.unique(other_match['entity'].tolist())
+            for entity in entity_match:
+                other_match_entity = other_match[other_match['entity']==entity]
+                other_match_label = list(np.unique( \
+                                other_match_entity['entitylabel'].tolist()))
+                self.add_svo_index_map(other_match_entity.iloc[0])
+
+                svo_namespace = entity.split('/')[-1].split('#')[0]
+                svo_entity = entity.split('#')[-1]
+                svo_hash = hash(svo_namespace+svo_entity)
+                rank = min(sum(other_match_entity['rank'].tolist()),.9)
+                if not 'hasSVOEntity' in self.graph[name_index].keys():
+                    self.graph[name_index]['hasSVOEntity'] = { svo_hash : rank }
+                elif not svo_hash in \
+                                self.graph[name_index]['hasSVOEntity'].keys():
+                    self.graph[name_index]['hasSVOEntity'][svo_hash] = rank
+                else:
+                    self.graph[name_index]['hasSVOEntity'][svo_hash] = \
+                        max(rank, \
+                            self.graph[name_index]['hasSVOEntity'][svo_hash])
+
+    def expand_node(self, word):
+        """
+        Expand a node by grabbing its Wikipedia and WWN definitions.
+
+        Args:
+            word: A string the label of the current node.
+        """
+
+        if not word in self.category_names:
+            self.add_wikipedia_def(word, long=True)
+            self.add_wwn_def(word)
+
+
+    def add_wikipedia_def(self, name, long = False):
+        """
+        Get term's Wikipedia definition.
+
+        Args:
+            name: A string the label of the current node.
+            long: A Boolean value indicating whether the whole Wikipedia page
+                  should be parsed or just the definition paragraph. Default
+                  is False.
+        """
+
+        [text, disambig, title, redirecttitle] = wapi.get_wikipedia_text(name)
+        text_parsed = pt.ParsedDoc(text)
+        lemma = ' '.join(self.graph[name]['lemma_seq']).lower()
+
+        title_lower = title.lower().replace('\s+','')
+        redirect_lower = redirecttitle.lower().replace('\s+','')
+
+        if not disambig:
+
+            use_name = name
+            syn = '('+name+')' in title_lower or\
+                  '('+lemma+')' in title_lower or\
+                  '('+name+')' in redirect_lower or\
+                  '('+lemma+')' in redirect_lower
+
+            if (name == redirect_lower) or \
+                (lemma== title_lower) or \
+                (lemma == redirect_lower) or syn:
+                use_name = title_lower
+
+            self.add_related(use_name, title_lower, name)
+
+            p = text_parsed.find_is_nsubj(use_name)
+            name_found = ''
+            pno = -1
+            if not p is None:
+                pno = list(p.keys())[0]
+                name_found = use_name
+                sno = p[pno][0]
+
+            if (pno != -1) and (name_found == use_name):
+                def_noun_groups = text_parsed.paragraphs[pno].get_noun_groups()
+                self.add_definition(name, name_found, def_noun_groups)
+                if long:
+                    noun_groups_index = text_parsed.get_term_noun_groups(name_found)
+                    self.add_dimensions(name, name_found, noun_groups_index)
+
+    def add_related(self, name, title, name_orig):
+        """
+        Add related and synonm terms based on Wikipedia search results.
+
+        Args:
+            name      : A string the label of the current node.
+            title     : The title of the top Wikipedia page from search.
+            name_orig : The original search term.
+        """
+
+        if name != title:
+            src = self.index_map[name]
+            dest = title
+            if not 'isRelatedTo' in self.graph[src].keys():
+                self.graph[src]['isRelatedTo'] = [dest]
+            elif not dest in graph[src]['isRelatedTo']:
+                self.graph[src]['isRelatedTo'].append(dest)
+
+        if name != name_orig:
+            src = self.index_map[name_orig]
+            dest = name
+            if not 'hasSynonym' in self.graph[src].keys():
+                self.graph[src]['hasSynonym'] = [dest]
+            elif not dest in self.graph[src]['hasSynonym']:
+                self.graph[src]['hasSynonym'].append(dest)
+            self.add_index_map(src, dest)
+
+    def add_definition(self, name, name_found, nodes_par):
+        """
+        Add technical terms from Wikipedia definition.
+
+        First sentence terms are added as isDefinedBy while second and later
+        sentence terms are added as isCloselyRelatedTo.
+
+        Args:
+            name       : A string the label of the current node.
+            name_found : The title of the top Wikipedia page from search.
+            nodes_par  : A dict of the parsed noun groups in the definition
+                         paragraph on Wikipedia.
+        """
+
+        name_index = self.index_map[name]
+        max_i = min(len(nodes_par.keys()), 3)
+        for i in range(1,max_i):
+            nodes = nodes_par[i]
+            if i == 1:
+                edge_label = 'isDefinedBy'
+            else:
+                edge_label = 'isCloselyRelatedTo'
+            for (node_name, attr) in nodes.items():
+                if node_name.lower() != name_found:
+                    if not edge_label in self.graph[name_index].keys():
+                        self.graph[name_index][edge_label] = [node_name.lower()]
+                    elif not node_name.lower() in \
+                        self.graph[name_index][edge_label]:
+                        self.graph[name_index][edge_label]\
+                            .append(node_name.lower())
+
+    def add_dimensions(self, name, name_found, noun_groups_index):
+        """
+        Add variations on the desired term from parsing the whole Wikipedia
+        page.
+
+        Args:
+            name              : A string the label of the current node.
+            name_found        : The title of the top Wikipedia page from search.
+            noun_groups_index : A Pandas DataFrame containing the columns
+                                'noun_group', 'modified', and 'aspects' as
+                                described in parse_tools.
+        """
+
+        name_index = self.index_map[name]
+        modified = noun_groups_index.loc[noun_groups_index['modified'],\
+                                        'noun_group'].tolist()
+        aspects = noun_groups_index.loc[noun_groups_index['aspects'],\
+                                        'noun_group'].tolist()
+        self.graph[name_index]['modified_terms'] = \
+                                        [x for x in modified if x != name_found]
+        self.graph[name_index]['term_aspects'] = \
+                                        [x for x in aspects if x != name_found]
+
+    def add_wwn_def(self, name):
+        """
+        Add Wiktionary definition terms from WiktiWordNet as isWWNDefinedBy.
+
+        Args:
+            name              : A string the label of the current node.
+        """
+
+        name_index = self.index_map[name]
+        if 'hasWWNDefinition' in self.graph[name_index].keys():
+            for definition in self.graph[name_index]['hasWWNDefinition']:
+                def_parsed = pt.ParsedParagraph(definition)
+                def_noun_groups = def_parsed.get_noun_groups(1)
+                for ng, attr in def_noun_groups.items():
+                    if ng.lower() != name:
+                        if not 'isWWNDefinedBy' in self.graph[name_index].keys():
+                            self.graph[name_index]['isWWNDefinedBy'] = \
+                                                                [ng.lower()]
+                        elif not ng.lower() in \
+                            self.graph[name_index]['isWWNDefinedBy']:
+                            self.graph[name_index]['isWWNDefinedBy']\
+                                .append(ng.lower())
+
+    def graph_inference(self):
+        """
+        Create inference links and new rank values for SVO Variable/Entity and WM
+        indicator alignments. Assign most likely SVO category to each term.
+        """
+
+        self.graph_define_svo_category()
+        self.graph_add_var_entity_links()
+
+    def graph_define_svo_category(self):
+        """
+        Determine the most likely SVO category for all terms (detSVOCategory).
+        """
+
+        for term, attr in self.graph.items():
+            if attr['type'] == 'adj':
+                self.graph[term]['detSVOCategory'] = 'Attribute'
+            elif attr['type'] == 'noun':
+                if 'hasSVOMatch' in attr.keys() or \
+                    'hasWWNCategory' in attr.keys():
+                    if 'hasSVOMatch' in attr.keys():
+                        classes = list(attr['hasSVOMatch'].keys())
+                    else:
+                        classes = attr['hasWWNCategory']
+                    if 'Phenomenon' in classes or 'Matter' in classes or \
+                        'Role' in classes or 'Form' in classes:
+                        self.graph[term]['detSVOCategory'] = 'Phenomenon'
+                    elif 'Property' in classes:
+                        self.graph[term]['detSVOCategory'] = 'Property'
+                    elif 'Attribute' in classes:
+                        self.graph[term]['detSVOCategory'] = 'Attribute'
+                    elif 'Process' in classes:
+                        self.graph[term]['detSVOCategory'] = 'Process'
+                    else:
+                        self.graph[term]['detSVOCategory'] = classes[0]
+                else:
+                    self.graph[term]['detSVOCategory'] = 'Phenomenon'
+            else:
+                self.graph[term]['detSVOCategory'] = 'Phenomenon'
+
+
+        for term, attr in self.graph.items():
+            if attr['type'] == 'noungrp':
+                self.graph[term]['detSVOCategory'] = 'Phenomenon'
+                categories = {}
+                for component in attr['hasComponents']:
+                    if component in self.index_map.keys():
+                        comp_index = self.index_map[component]
+                        if (len(comp_index.split()) == 1):
+                            cat = self.graph[comp_index]['detSVOCategory']
+                            if not cat in categories.keys():
+                                categories[cat] = 1
+                            else:
+                                categories[cat] += 1
+                category = []
+                count = 0
+                for cat in categories.keys():
+                    if categories[cat] > count:
+                        category = [cat]
+                        count = categories[cat]
+                    elif categories[cat] == count:
+                        category.append(cat)
+                if 'Phenomenon' in category and 'Property' in category:
+                    self.graph[term]['detSVOCategory'] = 'Variable'
+                elif 'Phenomenon' in category or (category == []):
+                    self.graph[term]['detSVOCategory'] = 'Phenomenon'
+                elif 'Property' in category:
+                    self.graph[term]['detSVOCategory'] = 'Property'
+                elif 'Attribute' in category:
+                    self.graph[term]['detSVOCategory'] = 'Attribute'
+                elif 'Process' in category:
+                    self.graph[term]['detSVOCategory'] = 'Process'
+                else:
+                    self.graph[term]['detSVOCategory'] = category[0]
+
+        for term, attr in self.graph.items():
+            if attr['type'] == 'modnoun':
+                attr['detSVOCategory'] = 'Phenomenon'
+                if attr['isTypeOf'][0] in self.index_map.keys():
+                    typ = self.index_map[attr['isTypeOf'][0]]
+                    category = self.graph[typ]['detSVOCategory']
+                    if 'Attribute' in category:
+                        self.graph[term]['detSVOCategory'] = 'Attribute'
+                    elif 'Variable' in category:
+                        self.graph[term]['detSVOCategory'] = 'Variable'
+                    else:
+                        self.graph[term]['detSVOCategory'] = \
+                                                        'Specialized' + category
+
+        for term, attr in self.graph.items():
+            if (attr['type'] == 'adp') and ' of ' in term:
+                attr['detSVOCategory'] = 'Phenomenon'
+
+                categories = {}
+                components = attr['hasComponents']
+                for comp in components:
+                    comp_index = self.index_map[comp]
+                    cat = self.graph[comp_index]['detSVOCategory']
                     if not cat in categories.keys():
                         categories[cat] = 1
                     else:
-                        categories[cat] += 1                        
-                except:
-                    #print('error 1')
-                    pass
-            category = []
-            count = 0
-            for cat in categories.keys():
-                if categories[cat] > count:
-                    category = [cat]
-                    count = categories[cat]
-                elif categories[cat] == count:
-                    category.append(cat)
-            if 'Phenomenon' in category and 'Property' in category:
-                graph[term]['detSVOCategory'] = 'Variable'
-            elif 'Phenomenon' in category or (category == []):
-                graph[term]['detSVOCategory'] = 'Phenomenon'
-            elif 'Property' in category:
-                graph[term]['detSVOCategory'] = 'Property'
-            elif 'Attribute' in category:
-                graph[term]['detSVOCategory'] = 'Attribute'
-            elif 'Process' in category:
-                graph[term]['detSVOCategory'] = 'Process'
-            else:
-                graph[term]['detSVOCategory'] = category[0]
+                        categories[cat] += 1
 
-    # now categorize modified compound or singular nouns:
-    for term in graph.keys():
-        if graph[term]['termtype'] == 'an':
-            graph[term]['detSVOCategory'] = 'Phenomenon'
-            try:
-                typ = graph[term]['isTypeOf'][0]
-                category = graph[typ]['detSVOCategory']
-                if 'Attribute' in category:
-                    graph[term]['detSVOCategory'] = 'Attribute'
-                else:
-                    graph[term]['detSVOCategory'] = 'Specialized' + category
-            except:
-                #print('error 2')
-                #print(term, graph[term])
-                pass
-            
-    # now categorize compound terms combined with adposition 'of':
-    for term in graph.keys():
-        if graph[term]['termtype'] == 'adpof':
-            graph[term]['detSVOCategory'] = 'Phenomenon'
-            
-            categories = {}
-            try:
-                components = graph[term]['components']
-                for comp in components:
-                    try:
-                        cat = graph[comp]['detSVOCategory']
-                        if not cat in categories.keys():
-                            categories[cat] = 1
-                        else:
-                            categories[cat] += 1
-                    except:
-                        #print('error 3')
-                        pass
-            except:
-                #print('error 4')
-                pass
-            
-            if ('Phenomenon' in categories.keys() or 'SpecializedPhenomenon' in categories.keys()) \
-                and ('Property' in categories.keys() or 'SpecializedProperty' in categories.keys()):
-                graph[term]['detSVOCategory'] = 'Variable'
-            elif 'SpecializedPhenomenon' in categories.keys():
-                graph[term]['detSVOCategory'] = 'SpecializedPhenomenon'
-            elif 'Phenomenon' in categories.keys():
-                graph[term]['detSVOCategory'] = 'Phenomenon'
-            elif 'SpecializedProperty' in categories.keys():
-                graph[term]['detSVOCategory'] = 'SpecializedProperty'
-            elif 'Property' in categories.keys():
-                graph[term]['detSVOCategory'] = 'Property'
-            elif 'SpecializedAttribute' in categories.keys():
-                graph[term]['detSVOCategory'] = 'SpecializedAttribute'
-            elif 'Attribute' in categories.keys():
-                graph[term]['detSVOCategory'] = 'Attribute'
-            elif 'SpecializedProcess' in categories.keys():
-                graph[term]['detSVOCategory'] = 'SpecializedProcess'
-            elif 'Process' in categories.keys():
-                graph[term]['detSVOCategory'] = 'Process'
-    
-    return graph
-            
-def graph_add_var_entity_links(graph, indicator_map):
-    
-    terms = list(graph.keys())
-    for link in (variable_links['first_order'] + variable_links['second_order']):
-        factor = 1
-        if link in variable_links['second_order']:
-            factor = 0.83
-        for term in terms:
-            if link in graph[term].keys():
-                linked_terms = graph[term][link]
-                num_linked_terms = len(linked_terms)
-                for typ_link in ['hasSVOVar', 'hasSVOEntity', 'hasWMIndicator']:
-                    new_val = {}
-                    if not typ_link in graph[term].keys():
-                        graph[term][typ_link] = {}
-                    for lterm in linked_terms:
-                        if lterm in indicator_map.keys() and typ_link in graph[indicator_map[lterm]].keys():
-                            entity = graph[indicator_map[lterm]][typ_link]
-                            for key, val in entity.items():
-                                if not key in new_val.keys():
-                                    new_val[key] = 0
-                                new_val[key] += factor * val/num_linked_terms
-                    for key, val in new_val.items():
-                        if val > 0.05:
-                            if key in graph[term][typ_link].keys():
-                                graph[term][typ_link][key] = max(val, graph[term][typ_link][key])
-                            else:
-                                graph[term][typ_link][key] = val
-    return graph
-        
+                if ('Phenomenon' in categories.keys() or \
+                    'SpecializedPhenomenon' in categories.keys()) \
+                    and ('Property' in categories.keys() or \
+                    'SpecializedProperty' in categories.keys()):
+                    self.graph[term]['detSVOCategory'] = 'Variable'
+                elif 'SpecializedPhenomenon' in categories.keys():
+                    self.graph[term]['detSVOCategory'] = 'SpecializedPhenomenon'
+                elif 'Phenomenon' in categories.keys():
+                    self.graph[term]['detSVOCategory'] = 'Phenomenon'
+                elif 'SpecializedProperty' in categories.keys():
+                    self.graph[term]['detSVOCategory'] = 'SpecializedProperty'
+                elif 'Property' in categories.keys():
+                    self.graph[term]['detSVOCategory'] = 'Property'
+                elif 'SpecializedAttribute' in categories.keys():
+                    self.graph[term]['detSVOCategory'] = 'SpecializedAttribute'
+                elif 'Attribute' in categories.keys():
+                    self.graph[term]['detSVOCategory'] = 'Attribute'
+                elif 'SpecializedProcess' in categories.keys():
+                    self.graph[term]['detSVOCategory'] = 'SpecializedProcess'
+                elif 'Process' in categories.keys():
+                    self.graph[term]['detSVOCategory'] = 'Process'
 
+    def graph_add_var_entity_links(self):
+        """Propagate SVO variable and WM indicator links "upward" in knowledge
+        graph."""
 
+        terms = list(self.graph.keys())
+        all_links = self.variable_links['first_order'] + \
+                    self.variable_links['second_order']
+        matched_link = ['hasSVOVar', 'hasSVOEntity', 'hasWMIndicator']
+
+        for link in all_links:
+            factor = 1
+            if link in self.variable_links['second_order']:
+                factor = 0.83
+            for term in terms:
+                if link in self.graph[term].keys():
+                    linked_terms = self.graph[term][link]
+                    num_linked_terms = len(linked_terms)
+                    for typ_link in matched_link:
+                        new_val = {}
+                        if not typ_link in self.graph[term].keys():
+                            self.graph[term][typ_link] = {}
+                        for lterm in linked_terms:
+                            if lterm in self.index_map.keys() and \
+                                typ_link in self.graph[self.index_map[lterm]].keys():
+                                entity = self.graph[self.index_map[lterm]][typ_link]
+                                for key, val in entity.items():
+                                    if not key in new_val.keys():
+                                        new_val[key] = 0
+                                    new_val[key] += factor * val/num_linked_terms
+                        for key, val in new_val.items():
+                            if val > 0.05:
+                                if key in self.graph[term][typ_link].keys():
+                                    self.graph[term][typ_link][key] = \
+                                    max(val, self.graph[term][typ_link][key])
+                                else:
+                                    self.graph[term][typ_link][key] = val

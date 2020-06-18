@@ -1,2 +1,5 @@
 resources/world_modelers_indicators_kg.json
 resources/wiktiwordnet.json
+resources/.ipynb_checkpoints/*
+resources/scivar_kg.json
+.ipynb_checkpoints/*
