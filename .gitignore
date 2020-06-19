@@ -3,3 +3,4 @@ resources/wiktiwordnet.json
 resources/.ipynb_checkpoints/*
 resources/scivar_kg.json
 .ipynb_checkpoints/*
+"Generate WM Indicators Variable components graph.ipynb"

@@ -144,7 +144,7 @@ class SciVarKG:
     wwn            = wwnapi.wiktiwordnet()
 
     def __init__(self, graphfile = None, \
-                svoindexfile = 'resources/svo_index_map.txt'):
+                svoindexfile = None, indexmapfile = None):
         """
         Intialize SciVarKG by loading from file, if provided.
 
@@ -160,7 +160,7 @@ class SciVarKG:
         else:
             self.load_graph(graphfile)
 
-        self.load_index_map()
+        self.load_index_map(indexmapfile)
         self.load_svo_index_map(svoindexfile)
 
     def load_graph(self, filename):
@@ -219,7 +219,6 @@ class SciVarKG:
 
         self.svo_index_map = {}
         hash_map = {}
-        svo_pref = 'http://www.geoscienceontology.org/svo/svl/'
         if not svomapfilename is None:
             if path.exists(svomapfilename):
                 with open(svomapfilename, 'r') as f:
@@ -229,7 +228,7 @@ class SciVarKG:
                         val = line.split(',')[1].strip('\n\r')
                         if category == 'hash':
                             if not hashval is None:
-                                newhash = hash( svo_pref + element['namespace'] + \
+                                newhash = hash( element['namespace'] + \
                                                '#' + element['entity'] )
                                 self.svo_index_map[newhash] = element
                                 hash_map[hashval] = newhash
@@ -237,6 +236,11 @@ class SciVarKG:
                             hashval = val
                         else:
                             element[category] = val
+                    if not hashval is None:
+                        newhash = hash( element['namespace'] + \
+                                        '#' + element['entity'] )
+                        self.svo_index_map[newhash] = element
+                        hash_map[hashval] = newhash
                     self.update_svo_hash(hash_map)
             else:
                 print('ERROR: Could not read SVO index map from {}.'\
@@ -300,7 +304,7 @@ class SciVarKG:
                    .format(svo_entity, self.svo_index_map[svo_hash]) )
 
     def write_svo_index_map(self, svomapfilename = \
-                                                'resources/svo_index_map.txt'):
+                                                'resources/scivar_svo_index_map.txt'):
         """
         Write the SVO index map to file.
 
@@ -321,14 +325,14 @@ class SciVarKG:
                 for hashval, attr in self.svo_index_map.items():
                     f.write('hash,{}\n'.format(hashval))
                     for key, val in attr.items():
-                        f.write('{},{}\n', hashval)
+                        f.write('{},{}\n'.format(key,val))
         except:
             print('ERROR: Could not write SVO index map to {}.'\
                       .format(svomapfilename))
             print('Call write_svo_index_map with no arguments to write to the')
-            print('default file: resources/svo_index_map.txt')
+            print('default file: resources/scivar_svo_index_map.txt')
 
-    def load_index_map(self, index_map_file = None):
+    def load_index_map(self, indexmapfile = None):
         """
         Initialize index map with all synonyms.
 
@@ -337,14 +341,14 @@ class SciVarKG:
 
         self.index_map = {}
 
-        if index_map_file is None:
+        if indexmapfile is None:
             for key in self.graph.keys():
                 self.index_map[key] = key
         else:
-            with open(index_map_file) as f:
+            with open(indexmapfile) as f:
                 self.index_map = json.load(f)
 
-            self.update_synonyms()
+        self.update_synonyms()
 
     def update_synonyms(self):
         """
@@ -370,15 +374,14 @@ class SciVarKG:
         link = 'hasSynonym'
 
         rem_nodes = []
-        for name, attr in self.graph.keys():
-            if not name in self.index_map.keys():
-                self.index_map[name] = name
+        for name, attr in self.graph.items():
             if link in attr.keys():
-                for synonym in attr[link]:
-                    if synonym in self.graph.keys():
-                        rem_nodes.append(synonym)
-                    if not synonym in self.index_map.keys():
-                        self.index_map[synonym] = name
+                synonym = attr[link][0].lower()
+                if synonym in self.graph.keys():
+                    rem_nodes.append(name)
+                    self.index_map[name] = synonym
+                elif not name in self.index_map.keys():
+                    self.index_map[name] = name
 
         new_graph = {}
         for key, val in self.graph.items():
@@ -433,7 +436,7 @@ class SciVarKG:
         if not synonym in index_keys and index in graph_keys:
             self.index_map[synonym] = index
 
-    def write_index_map(self, filename = 'resources/index_map.json'):
+    def write_index_map(self, filename = 'resources/scivar_index_map.json'):
         """
         Write index map to file.
 
@@ -543,15 +546,15 @@ class SciVarKG:
         lemma = ' '.join(attr['lemma_seq']).lower()
         name_lower = name.lower()
 
-        if not name_lower in existing_nodes and \
-            not name_lower in self.category_names and\
-            not lemma in self.category_names:
+        if not name_lower in existing_nodes:
 
             self.graph[name_lower] = { 'pos_seq'   : attr['pos_seq'],
                                        'lemma_seq' : attr['lemma_seq'],
                                        'type'      : attr['type']       }
             self.add_index_map(name_lower, name_lower)
 
+        if not name_lower in self.category_names and\
+            not lemma in self.category_names:
             self.add_components(name_lower, attr)
             self.add_type_attr(name_lower, attr)
             self.add_noun_components(name_lower, attr)
@@ -613,10 +616,10 @@ class SciVarKG:
                     self.graph[word_index]['isTypeOf'] = [node_type]
                 elif not node_type in self.graph[word_index]['isTypeOf']:
                     self.graph[word_index]['isTypeOf'].append(node_type)
-
+                
                 if not 'hasType' in self.graph[node_type].keys():
                     self.graph[node_type]['hasType'] = [word]
-                elif not word in graph[node_type]['hasType']:
+                elif not word in self.graph[node_type]['hasType']:
                     self.graph[node_type]['hasType'].append(word)
 
         if 'has_attribute' in attr.keys():
@@ -625,7 +628,7 @@ class SciVarKG:
 
                 if not 'hasAttribute' in self.graph[word_index].keys():
                     self.graph[word_index]['hasAttribute'] = [node_attr]
-                elif not node_attr in graph[word_index]['hasAttribute']:
+                elif not node_attr in self.graph[word_index]['hasAttribute']:
                     self.graph[word_index]['hasAttribute'].append(node_attr)
 
                 if not 'isAttributeOf' in self.graph[node_attr].keys():
@@ -649,7 +652,8 @@ class SciVarKG:
             lemma_seq = attr['lemma_seq']
             i = 0
             for comp_name in name.split():
-                attr2 = {'pos_seq':['NOUN'], 'lemma_seq':[lemma_seq[i]]}
+                attr2 = {'pos_seq':['NOUN'], 'lemma_seq':[lemma_seq[i]], 
+                         'type': 'noun' }
                 self.add_term_node(comp_name, attr2)
                 if not 'hasComponents' in self.graph[name_index].keys():
                     self.graph[name_index]['hasComponents'] = [comp_name]
@@ -681,13 +685,13 @@ class SciVarKG:
         for category in categories.keys():
             if not 'hasWWNCategory' in self.graph[name_index].keys():
                 self.graph[name_index]['hasWWNCategory'] = [category]
-            elif not category in graph[name_index]['hasWWNCategory']:
+            elif not category in self.graph[name_index]['hasWWNCategory']:
                 self.graph[name_index]['hasWWNCategory'].append(category)
 
             definition = categories[category]
             if not 'hasWWNDefinition' in self.graph[name_index].keys():
                 self.graph[name_index]['hasWWNDefinition'] = [definition]
-            elif not definition in graph[name_index]['hasWWNDefinition']:
+            elif not definition in self.graph[name_index]['hasWWNDefinition']:
                 self.graph[name_index]['hasWWNDefinition'].append(definition)
 
     def add_svo_info(self, name):
@@ -723,6 +727,8 @@ class SciVarKG:
                 svo_namespace = entity.split('/')[-1].split('#')[0]
                 svo_entity = entity.split('#')[-1]
                 svo_hash = hash(svo_namespace+svo_entity)
+                if not svo_hash in self.svo_index_map.keys():
+                    print('Hash error: {}, {}'.format(name_index, entity))
                 svo_class = exact_match_entity['entityclass'].iloc[0]
                 if not 'hasSVOMatch' in self.graph[name_index].keys():
                     self.graph[name_index]['hasSVOMatch'] = \
@@ -746,7 +752,9 @@ class SciVarKG:
                 svo_namespace = entity.split('/')[-1].split('#')[0]
                 svo_entity = entity.split('#')[-1]
                 svo_hash = hash(svo_namespace+svo_entity)
-                rank = min(sum(var_match_entity['rank'].tolist()),.9)
+                if not svo_hash in self.svo_index_map.keys():
+                    print('Hash error: {}, {}'.format(name_index, entity))
+                rank = max(var_match_entity['rank'].tolist())
                 if not 'hasSVOVar' in self.graph[name_index].keys():
                     self.graph[name_index]['hasSVOVar'] = { svo_hash : rank }
                 elif not svo_hash in self.graph[name_index]['hasSVOVar'].keys():
@@ -765,7 +773,9 @@ class SciVarKG:
                 svo_namespace = entity.split('/')[-1].split('#')[0]
                 svo_entity = entity.split('#')[-1]
                 svo_hash = hash(svo_namespace+svo_entity)
-                rank = min(sum(other_match_entity['rank'].tolist()),.9)
+                if not svo_hash in self.svo_index_map.keys():
+                    print('Hash error: {}, {}'.format(name_index, entity))
+                rank = max(other_match_entity['rank'].tolist())
                 if not 'hasSVOEntity' in self.graph[name_index].keys():
                     self.graph[name_index]['hasSVOEntity'] = { svo_hash : rank }
                 elif not svo_hash in \
@@ -801,7 +811,6 @@ class SciVarKG:
         """
 
         [text, disambig, title, redirecttitle] = wapi.get_wikipedia_text(name)
-        text_parsed = pt.ParsedDoc(text)
         lemma = ' '.join(self.graph[name]['lemma_seq']).lower()
 
         title_lower = title.lower().replace('\s+','')
@@ -822,20 +831,23 @@ class SciVarKG:
 
             self.add_related(use_name, title_lower, name)
 
-            p = text_parsed.find_is_nsubj(use_name)
-            name_found = ''
-            pno = -1
-            if not p is None:
-                pno = list(p.keys())[0]
-                name_found = use_name
-                sno = p[pno][0]
+            use_name_index = self.index_map[use_name]
+            if not 'isDefinedBy' in self.graph[use_name_index].keys():
+                text_parsed = pt.ParsedDoc(text)
+                p = text_parsed.find_is_nsubj(use_name)
+                name_found = ''
+                pno = -1
+                if not p is None:
+                    pno = list(p.keys())[0]
+                    name_found = use_name
+                    sno = p[pno][0]
 
-            if (pno != -1) and (name_found == use_name):
-                def_noun_groups = text_parsed.paragraphs[pno].get_noun_groups()
-                self.add_definition(name, name_found, def_noun_groups)
-                if long:
-                    noun_groups_index = text_parsed.get_term_noun_groups(name_found)
-                    self.add_dimensions(name, name_found, noun_groups_index)
+                if (pno != -1) and (name_found == use_name):
+                    def_noun_groups = text_parsed.paragraphs[pno].get_noun_groups()
+                    self.add_definition(name, name_found, def_noun_groups)
+                    if long:
+                        noun_groups_index = text_parsed.get_term_noun_groups(name_found)
+                        self.add_dimensions(name, name_found, noun_groups_index)
 
     def add_related(self, name, title, name_orig):
         """
@@ -852,7 +864,7 @@ class SciVarKG:
             dest = title
             if not 'isRelatedTo' in self.graph[src].keys():
                 self.graph[src]['isRelatedTo'] = [dest]
-            elif not dest in graph[src]['isRelatedTo']:
+            elif not dest in self.graph[src]['isRelatedTo']:
                 self.graph[src]['isRelatedTo'].append(dest)
 
         if name != name_orig:
